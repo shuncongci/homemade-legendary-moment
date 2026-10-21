@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "models": [
+    {
+      "name": "M9 series 3.0 epoch11",
+      "path": "app/src/main/assets/leica/leica-m9-v3-epoch11.fp16.onnx",
+      "bundled": true,
+      "origin": "author",
+      "repository": null,
+      "sourceCheckpointSha256": "8456c139e98ce98ac8742a5d20bc1a65a0315f85f13ad37c02cb708af1c337c6",
+      "sha256": "8936b8c86656265ab07c30b9b4cbbd7fa195d6e44cb3be1d4fd059bb36781e33",
+      "bytes": 10053669,
+      "license": "Personal non-commercial use; see LICENSE"
+    },
+    {
+      "name": "Depth Anything V2 Small",
+      "path": "app/src/main/assets/leica/legendary-1.0-depth-native-chunk64.fp32.onnx",
+      "bundled": false,
+      "origin": "third-party",
+      "repository": "https://github.com/DepthAnything/Depth-Anything-V2",
+      "sourceCheckpointSha256": "715fade13be8f229f8a70cc02066f656f2423a59effd0579197bbf57860e1378",
+      "sha256": "eeb3e43a7ac9f11a720f5d20a69a18ed95332456700717e7f460fb4600a05eb5",
+      "bytes": 99026233,
+      "license": "Apache-2.0 (Small model; other sizes differ)"
+    },
+    {
+      "name": "BokehMe ARNet",
+      "path": "app/src/main/assets/leica/legendary-1.0-arnet.fp16.onnx",
+      "bundled": false,
+      "origin": "third-party",
+      "repository": "https://github.com/JuewenPeng/BokehMe",
+      "sourceCheckpointSha256": "6c7dba6f32e3afc8e984eb5adfecfea5d13b6f4ebd132a5a890beba384be4752",
+      "sha256": "a3aa5fa6a0818f36dbfa4be4dd5471d874cea5981357b7aeb28919954e70d05c",
+      "bytes": 1867929,
+      "license": "Upstream code: Apache-2.0; check checkpoint terms"
+    },
+    {
+      "name": "GAIC MobileNetV2 reddim16",
+      "path": "app/src/main/assets/leica/gaic-mobilenetv2-reddim16.fp32.onnx",
+      "bundled": false,
+      "origin": "third-party",
+      "repository": "https://github.com/bo-zhang-cs/GAIC-Pytorch",
+      "sourceCheckpointSha256": "eb1d5eed2710c79d3270add448111b9e6fa2475e246694c0ad995a6efb299e8c",
+      "sha256": "85d1efb614594871adce2f4f28c9804ae8b69db12680108c5699ed74394871b3",
+      "bytes": 15656028,
+      "license": "Code: MIT; checkpoint redistribution not confirmed"
+    },
+    {
+      "name": "SAM 2.1 Hiera Tiny",
+      "path": "app/src/main/assets/leica/subject-sam2.1-tiny.fp32.onnx",
+      "bundled": false,
+      "origin": "third-party",
+      "repository": "https://github.com/facebookresearch/sam2",
+      "sourceCheckpointSha256": "7402e0d864fa82708a20fbd15bc84245c2f26dff0eb43a4b5b93452deb34be69",
+      "sha256": "70197e1d6d05acb8b7c69aa78366746ce2b64fe89d9b9d162623cf42e3cc2818",
+      "bytes": 125905157,
+      "license": "Apache-2.0"
+    },
+    {
+      "name": "ViTMatte Small Composition-1k",
+      "path": "app/src/main/assets/leica/subject-vitmatte-small.fp32.onnx",
+      "bundled": false,
+      "origin": "third-party",
+      "repository": "https://huggingface.co/hustvl/vitmatte-small-composition-1k",
+      "sourceCheckpointSha256": "bda9289db1bb6762d978b42d1c62ae3f34daf7497171a347a1d09657efd788cb",
+      "sha256": "e07f57abe253b6a4f81cc87f9b4f5145f9893d375f7f48690710d4168b59e51b",
+      "bytes": 103928662,
+      "license": "Apache-2.0 (model card)"
+    }
+  ]
+}

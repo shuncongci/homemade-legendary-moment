@@ -1,0 +1,18 @@
+{
+  "input": "procedural RGB ramps; no photos",
+  "generator": "tools/generate_test_fixtures.py",
+  "versions": {
+    "numpy": "2.3.5",
+    "opencv": "5.0.0",
+    "pillow": "12.2.0"
+  },
+  "sha256": {
+    "bicubic_1500x1998.rgb": "8a8306f8959cbfae506affc460f09a0eabd8b6195590d68b11852c2363fb7a9c",
+    "bicubic_777x1033.rgb": "44eb06642267fd89f0ed6e387be2b95df65ed254f8adebfeb5b01a34a207269a",
+    "bilinear_500x666.rgb": "1b3888741061462f70a23792e7ba608e6852f20e578e3eaf28c3ba4d0d2a3bbc",
+    "fusion_modern_1024.rgb": "fd3b20261075a7bb02a1715b8f1f3feba7fca22fddd9ec367ff6c8402338d8af",
+    "input_1024.rgb": "1c6650cbd8f63ad0e36edba32d68eda41e1ac91b8453211e08c31cd1fba410b5",
+    "lab_input_1024.rgb": "60751b52641c0c2709309ee74b8f643241cd8dd80d9b98ff20df0d8d135a55ac",
+    "leica-modern-1.0.expected_1024.rgb": "e82214331642aec1e3fadebc89e9533c296e25eb997b8ef40e7d9301e977946d"
+  }
+}

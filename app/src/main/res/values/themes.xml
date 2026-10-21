@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Leica" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="colorPrimary">#C4B8A6</item>
+        <item name="colorPrimaryDark">#978B7B</item>
+        <item name="colorOnPrimary">#171717</item>
+        <item name="colorAccent">#C4B8A6</item>
+        <item name="android:windowBackground">#151617</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+</resources>

@@ -1,0 +1,25 @@
+# Local configuration and signing
+local.properties
+keystore.properties
+*.jks
+*.keystore
+*.p12
+.env
+.env.*
+# Build/cache/IDE files
+.gradle/
+.kotlin/
+.idea/
+**/build/
+*.iml
+*.apk
+*.aab
+*.log
+__pycache__/
+.venv/
+# Downloaded source checkpoints and third-party model assets
+third_party/
+weights/
+exported/
+app/src/main/assets/leica/*.onnx
+!app/src/main/assets/leica/leica-m9-v3-epoch11.fp16.onnx

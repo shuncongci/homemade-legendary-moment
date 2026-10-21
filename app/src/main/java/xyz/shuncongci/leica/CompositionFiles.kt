@@ -1,0 +1,73 @@
+package xyz.shuncongci.leica
+
+import android.content.ContentValues
+import android.content.Context
+import android.graphics.Bitmap
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
+import java.io.File
+import java.util.UUID
+
+/** Dedicated immutable input snapshots: parent result-cache cleanup cannot change the composition source. */
+object CompositionFiles {
+    private fun base(context:Context)=File(context.noBackupFilesDir,"composition-sources")
+    fun stage(context:Context,uri:Uri,check:()->Unit):File {
+        val base=base(context)
+        base.listFiles()?.filter{System.currentTimeMillis()-it.lastModified()>7L*24*3600*1000}?.forEach{it.deleteRecursively()}
+        val folder=File(base,UUID.randomUUID().toString())
+        return try{PhotoCopy.stage(folder,{context.contentResolver.openInputStream(uri)?:error("无法读取构图来源")},check)}catch(e:Exception){folder.deleteRecursively();throw e}
+    }
+    fun source(context:Context,path:String):File {
+        val file=File(path).canonicalFile;val root=base(context).canonicalFile
+        require(file.parentFile?.parentFile==root && file.isFile){"构图来源已失效，请返回并重新打开"};return file
+    }
+    fun release(context:Context,path:String){runCatching{source(context,path).parentFile?.deleteRecursively()}}
+    fun dimensions(context:Context,file:File):Pair<Int,Int> = RegionPhoto(context,Uri.fromFile(file)).use{it.width to it.height}
+    class Loaded(val bitmap:Bitmap,val sourceW:Int,val sourceH:Int,val image:Planes)
+    /** onPreview borrows the decoded bitmap; UI consumers must copy it before retaining it. */
+    fun load(context:Context,file:File,cancel:Cancel,onPreview:(Bitmap)->Unit={}):Loaded = loadSource(context,Uri.fromFile(file),CompositionGeometry.FULL,cancel,onPreview)
+    fun loadSource(context:Context,uri:Uri,crop:CompositionGeometry.Crop,cancel:Cancel,onPreview:(Bitmap)->Unit={}):Loaded {
+        RegionPhoto(context,uri).use { source->
+            cancel.check();val box=CompositionGeometry.pixels(crop,source.width,source.height)
+            val (w,h)=CompositionGeometry.analysisSize(box.w,box.h)
+            var bmp=source.bitmap(box,CompositionGeometry.sample(box.w,box.h))
+            try {
+                if(bmp.width!=w || bmp.height!=h){val scaled=Bitmap.createScaledBitmap(bmp,w,h,true);if(scaled!==bmp)bmp.recycle();bmp=scaled}
+                cancel.check();onPreview(bmp);cancel.check()
+                val pixels=IntArray(w*h);bmp.getPixels(pixels,0,w,0,0,w,h);cancel.check()
+                val image=Planes.fromArgb(pixels,w,h)
+                cancel.check();return Loaded(bmp,box.w,box.h,image)
+            }catch(e:Exception){bmp.recycle();throw e}
+        }
+    }
+    /** A newly inserted pending item is removed on failure/cancel; existing gallery items are never opened for writing. */
+    fun save(context:Context,file:File,crop:CompositionGeometry.Crop,cancel:Cancel,outputSize:Pair<Int,Int>?=null):String = saveSource(context,Uri.fromFile(file),crop,cancel,outputSize)
+    fun saveSource(context:Context,uri:Uri,crop:CompositionGeometry.Crop,cancel:Cancel,outputSize:Pair<Int,Int>?=null):String {
+        val name="传奇一瞬-构图-${System.currentTimeMillis()}-${UUID.randomUUID().toString().take(8)}.png"
+        val cr=context.contentResolver
+        RegionPhoto(context,uri).use { source->
+            val box=CompositionGeometry.pixels(crop,source.width,source.height)
+            val (ow,oh)=outputSize?: (box.w to box.h)
+            fun encode(output:java.io.OutputStream){CompositionExport.writeSized(output,source.width,source.height,crop,ow,oh,cancel){b->
+                source.bitmap(b,1).let{bitmap->try{check(bitmap.width==b.w && bitmap.height==b.h){"原像素区域尺寸不一致"};IntArray(b.w*b.h).also{bitmap.getPixels(it,0,b.w,0,0,b.w,b.h)}}finally{bitmap.recycle()}}
+            }}
+            cancel.check()
+            if(Build.VERSION.SDK_INT>=29){
+                val values=ContentValues().apply{put(MediaStore.Images.Media.DISPLAY_NAME,name);put(MediaStore.Images.Media.MIME_TYPE,"image/png");put(MediaStore.Images.Media.RELATIVE_PATH,"Pictures/传奇一瞬");put(MediaStore.Images.Media.IS_PENDING,1)}
+                val uri=cr.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,values)?:error("无法创建相册文件")
+                try {
+                    (cr.openOutputStream(uri)?:error("无法打开相册文件")).use{encode(it)};cancel.check()
+                    values.clear();values.put(MediaStore.Images.Media.IS_PENDING,0)
+                    check(cr.update(uri,values,null,null)>0){"相册发布失败"}
+                    return "Pictures/传奇一瞬/$name"
+                }catch(e:Exception){cr.delete(uri,null,null);throw e}
+            }
+            val dir=context.getExternalFilesDir(Environment.DIRECTORY_PICTURES)?:error("存储不可用")
+            check(dir.isDirectory || dir.mkdirs());val target=File(dir,name)
+            check(target.createNewFile()){"同名文件已存在，未覆盖"}
+            try{target.outputStream().use{encode(it)};cancel.check();return target.absolutePath}catch(e:Exception){target.delete();throw e}
+        }
+    }
+}

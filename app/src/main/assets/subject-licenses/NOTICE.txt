@@ -1,0 +1,13 @@
+SAM 2.1 Tiny: Copyright (c) Meta Platforms, Inc. and affiliates.
+https://github.com/facebookresearch/sam2
+Image-only single-positive-click FP32 ONNX export adaptation, no video memory.
+
+ViTMatte: Jingfeng Yao, Xinggang Wang, Shusheng Yang, Baoyuan Wang.
+https://github.com/hustvl/ViTMatte
+https://huggingface.co/hustvl/vitmatte-small-composition-1k
+Transformers implementation: Copyright 2023 The HuggingFace Inc. team.
+Dynamic-height/width FP32 ONNX export adaptation. App uses scaled trimap and tiled inference.
+
+These upstream materials retain Apache-2.0; full license and original model card accompany this notice.
+Third-party model weights are NOT bundled in this source distribution.
+See models.json and THIRD_PARTY_NOTICES.md at project root for sources, hashes and limitations.

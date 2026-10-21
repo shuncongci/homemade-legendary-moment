@@ -1,0 +1,613 @@
+package xyz.shuncongci.leica
+
+import android.animation.ValueAnimator
+import android.content.res.Configuration
+import android.graphics.Bitmap
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.net.Uri
+import android.os.Bundle
+import android.os.SystemClock
+import android.transition.AutoTransition
+import android.transition.TransitionManager
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup.LayoutParams.MATCH_PARENT
+import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+import android.widget.*
+import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.*
+import java.util.concurrent.Executors
+import kotlin.coroutines.resume
+
+class LeicaActivity:AppCompatActivity() {
+    private lateinit var engine:LeicaEngine
+    private var workerThread:Thread?=null
+    private val worker=Executors.newSingleThreadExecutor{Thread(it,"legendary-worker").also{t->workerThread=t}}
+    private val dispatcher by lazy{worker.asCoroutineDispatcher()}
+    private val flow=PhotoFlow();private val previewUpdates=FocusPreviewUpdates()
+    private var workflow=PhotoWorkflow.COLOR
+    private var pendingComposition=false
+    private val gaic=GaicComposition()
+    private var crop=CompositionGeometry.FULL
+    private var sourceWidth=1;private var sourceHeight=1
+    private var composing=false;private var leaveCompositionWhenIdle=false
+    private var compositionLoaded:CompositionFiles.Loaded?=null
+    private var compositionLoadingBitmap:Bitmap?=null
+    private var compositionItems=emptyList<CompositionAnalysis.Suggestion>()
+    private var compositionSelected=0
+    private lateinit var compositionPreview:CompositionCropView
+    private lateinit var compositionPanel:LinearLayout;private lateinit var compositionChoices:LinearLayout
+    private lateinit var compositionInfo:TextView;private lateinit var compositionApply:StudioButton;private lateinit var compositionRetry:StudioButton
+    private lateinit var workflowPanel:LinearLayout;private lateinit var logPanel:LinearLayout
+    private lateinit var compositionBack:OnBackPressedCallback
+    private var photo:Uri?=null;private var current:LeicaEngine.Result?=null
+    private var resultAppearance:CompositionAppearance?=null
+    private lateinit var compositionButton:StudioButton
+    private var cancel:Cancel?=null;private var job:Job?=null;private var ticker:Job?=null
+    private var completedGenerationMs:Long?=null;private var progressMessage="";private var phase="";private var phaseStarted=0L;private var started=0L
+    private var outputSize=BokehOutput.SIZE_2048;private var regionVisible=true
+    private enum class Viewer(val label:String){ORIGINAL("原图"),GRAY("黑白深度"),THERMAL("伪彩深度"),RELIEF("空间"),RESULT("成片"),COMPARE("对比")}
+    private var viewer=Viewer.ORIGINAL
+    private var visual:DepthVisualMath.Data?=null;private var gray:Bitmap?=null;private var thermal:Bitmap?=null
+    private var depthCalculating=false
+    private lateinit var editor:EditorLayout;private lateinit var root:LinearLayout;private lateinit var controls:LinearLayout;private lateinit var actions:LinearLayout
+    private lateinit var compare:CompareView;private lateinit var stageView:DepthStageView
+    private lateinit var developView:DevelopView
+    private lateinit var emptyState:LinearLayout;private lateinit var previewTag:TextView;private lateinit var focusLegend:TextView
+    private lateinit var status:TextView;private lateinit var elapsedLabel:TextView;private lateinit var progress:ProgressBar;private lateinit var progressLabel:TextView
+    private lateinit var depthControls:LinearLayout;private lateinit var apertureDial:ApertureDial
+    private lateinit var processingButton:StudioButton;private lateinit var outputButton:StudioButton;private lateinit var focusButton:StudioButton;private lateinit var regionButton:StudioButton
+    private lateinit var subjectButton:StudioButton
+    private lateinit var subjectSelectButton:StudioButton;private lateinit var subjectComputeButton:StudioButton
+    private lateinit var subjectUndoButton:StudioButton;private lateinit var subjectClearButton:StudioButton
+    private lateinit var subjectControls:LinearLayout
+    private val subjectWork=SubjectPreviewWork()
+    private lateinit var apertureButtons:List<StudioButton>;private lateinit var modeButtons:List<StudioButton>
+    private lateinit var pickButton:StudioButton;private lateinit var runButton:StudioButton;private lateinit var saveButton:StudioButton;private lateinit var cancelButton:StudioButton
+    private lateinit var diagnostics:LiveDiagnostics;private var diagnosticsDialog:AlertDialog?=null;private var diagnosticsText:TextView?=null
+    private var diagnosticsDetails:TextView?=null;private var lastFailure:String?=null
+    private val photoImports by lazy{PhotoImports(applicationContext)}
+    private val documentPicker=registerForActivityResult(ActivityResultContracts.OpenDocument()){uri->if(uri!=null && !flow.busy)onPicked(uri)}
+    private val picker=registerForActivityResult(ActivityResultContracts.PickVisualMedia()){uri->if(uri!=null && !flow.busy)onPicked(uri)}
+    private fun dp(v:Int)=(v*resources.displayMetrics.density).toInt()
+    private fun surface(color:String,radius:Int=8)=GradientDrawable().apply{setColor(Color.parseColor(color));cornerRadius=dp(radius).toFloat()}
+    private fun label(value:String,size:Float=12f,color:Int=0xff9f9a92.toInt())=TextView(this).apply{text=value;textSize=size;setTextColor(color);setLineSpacing(dp(2).toFloat(),1f)}
+    private fun button(value:String,primary:Boolean=false)=StudioButton(this,primary).apply{text=value}
+    private fun row(vararg children:View)=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL;children.forEachIndexed{i,v->addView(v,LinearLayout.LayoutParams(0,WRAP_CONTENT,1f).apply{if(i>0)marginStart=dp(6)})}}
+    private fun LinearLayout.block(view:View,margin:Int=10){addView(view,LinearLayout.LayoutParams(MATCH_PARENT,WRAP_CONTENT).apply{topMargin=dp(margin)})}
+    private fun section(title:String)=LinearLayout(this).apply{
+        orientation=LinearLayout.VERTICAL;setPadding(dp(4),dp(18),dp(4),dp(14))
+        addView(View(this@LeicaActivity).apply{setBackgroundColor(0xff373737.toInt())},LinearLayout.LayoutParams(MATCH_PARENT,dp(1)))
+        block(label(title,11f,0xffd6cdbd.toInt()).apply{letterSpacing=.13f;setTypeface(Typeface.MONOSPACE)},12)
+    }
+    private fun transition(){if(ValueAnimator.areAnimatorsEnabled())TransitionManager.beginDelayedTransition(root,AutoTransition().apply{duration=260})}
+    private fun showPicker(){if(flow.busy)return;AlertDialog.Builder(this).setTitle("导入照片").setItems(arrayOf("从文件选择","从相册选择")){_,i->if(i==0)documentPicker.launch(arrayOf("image/*"))else picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))}.show()}
+    override fun onCreate(savedInstanceState:Bundle?){
+        super.onCreate(savedInstanceState)
+        engine=LeicaEngine(applicationContext,depthBusy={busy->runOnUiThread{
+            if(!isDestroyed && flow.busy){
+                depthCalculating=busy
+                if(busy && cancel?.cancelled!=true){stageView.beginLoading();compare.visibility=View.INVISIBLE}
+                else if(!busy){
+                    if(cancel?.cancelled!=true && visual!=null)stageView.finishLoading{if(!isDestroyed)applyViewer()}
+                    else {stageView.endLoading();compare.visibility=View.VISIBLE;applyViewer()}
+                }
+            }
+        }},depthReady={data->runOnUiThread{if(!isDestroyed && flow.busy && cancel?.cancelled!=true)acceptDepth(data)}},
+            depthPreview={data->runOnUiThread{
+                if(!isDestroyed && flow.busy && depthCalculating && cancel?.cancelled!=true){
+                    stageView.setPreview(data)
+                    previewTag.text="粗深度 · 仅预览 · 可拖动 · 完整深度计算中"
+                }
+            }},subjectBusy={busy->runOnUiThread{
+                if(!isDestroyed && flow.busy && cancel?.cancelled!=true){
+                    if(busy){stageView.beginSubject();compare.visibility=View.INVISIBLE}
+                    else stageView.endSubjectWait()
+                }
+            }},subjectReady={data,_->runOnUiThread{
+                if(!isDestroyed && flow.busy && flow.subjectEnabled && cancel?.cancelled!=true && !stageView.displaysSubject(data)){
+                    if(flow.operation==PhotoFlow.Operation.FOCUS_PREVIEW)viewer=Viewer.RELIEF
+                    compare.visibility=View.INVISIBLE;stageView.presentSubject(data,true)
+                }
+            }})
+        engine.clearCache()
+        outputSize=BokehOutput.entries.getOrElse(getPreferences(MODE_PRIVATE).getInt("bokeh-output",BokehOutput.SIZE_2048.ordinal)){BokehOutput.SIZE_2048}
+        root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setBackgroundColor(0xff151617.toInt())}
+        val header=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(0,0,0,dp(10))}
+        header.addView(LinearLayout(this).apply{
+            orientation=LinearLayout.VERTICAL
+            addView(label("传奇一瞬",21f,0xffeee8dd.toInt()).apply{letterSpacing=.12f;setTypeface(Typeface.create("serif",Typeface.NORMAL))})
+        },LinearLayout.LayoutParams(0,WRAP_CONTENT,1f))
+        header.addView(button("监测").apply{contentDescription="查看当前机型实时诊断";setOnClickListener{showDiagnostics()}},LinearLayout.LayoutParams(dp(60),WRAP_CONTENT))
+        header.addView(button("收起").apply{contentDescription="收起或展开参数";setOnClickListener{transition();editor.expanded=!editor.expanded;text=if(editor.expanded)"收起" else "参数";adaptChrome()}},LinearLayout.LayoutParams(dp(60),WRAP_CONTENT).apply{marginStart=dp(6)})
+        root.addView(header)
+        val photoPane=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
+        val imageArea=FrameLayout(this).apply{background=surface("#0D0E0F",6);clipToOutline=true}
+        compare=CompareView(this);imageArea.addView(compare,FrameLayout.LayoutParams(MATCH_PARENT,MATCH_PARENT))
+        stageView=DepthStageView(this).apply{visibility=View.GONE;onSubjectSettled={if(!isDestroyed && !isFinishing){applyViewer();refresh()}}};imageArea.addView(stageView,FrameLayout.LayoutParams(MATCH_PARENT,MATCH_PARENT))
+        developView=DevelopView(this);imageArea.addView(developView,FrameLayout.LayoutParams(MATCH_PARENT,MATCH_PARENT))
+        compositionPreview=CompositionCropView(this).apply{visibility=View.GONE};imageArea.addView(compositionPreview,FrameLayout.LayoutParams(MATCH_PARENT,MATCH_PARENT))
+        emptyState=LinearLayout(this).apply{
+            orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER;setPadding(dp(22),dp(16),dp(22),dp(16));isClickable=true;isFocusable=true;contentDescription="选择照片";setOnClickListener{showPicker()}
+            addView(label("选择照片",22f,0xffc4b8a6.toInt()).apply{gravity=Gravity.CENTER})
+        };imageArea.addView(emptyState,FrameLayout.LayoutParams(MATCH_PARENT,MATCH_PARENT))
+        photoPane.addView(imageArea,LinearLayout.LayoutParams(MATCH_PARENT,0,1f))
+        previewTag=label("原图",10f).apply{maxLines=2;setPadding(dp(3),dp(7),dp(3),dp(7))};photoPane.addView(previewTag)
+        val tabs=LinearLayout(this)
+        modeButtons=Viewer.entries.map{v->button(v.label).apply{setOnClickListener{selectViewer(v)}}}
+        modeButtons.forEachIndexed{i,b->tabs.addView(b,LinearLayout.LayoutParams(WRAP_CONTENT,WRAP_CONTENT).apply{if(i>0)marginStart=dp(5)})}
+        photoPane.addView(HorizontalScrollView(this).apply{isHorizontalScrollBarEnabled=false;addView(tabs)},LinearLayout.LayoutParams(MATCH_PARENT,WRAP_CONTENT))
+        controls=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(2),0,dp(2),dp(8))}
+        val scroll=ScrollView(this).apply{isFillViewport=false;isVerticalScrollBarEnabled=false;clipToPadding=false;addView(controls)}
+        workflowPanel=section("处理流程")
+        processingButton=button(workflow.label).apply{setOnClickListener{
+            if(!flow.busy)AlertDialog.Builder(this@LeicaActivity).setTitle("处理流程").setSingleChoiceItems(PhotoWorkflow.entries.map{it.label}.toTypedArray(),workflow.ordinal){dialog,index->
+                transition();workflow=PhotoWorkflow.entries[index];workflow.processing?.let{flow.selectProcessingMode(it)};stageView.enableSubject(flow.blur && flow.subjectReady);compare.focusPicking=false;dialog.dismiss();refresh()
+            }.setNegativeButton("返回",null).show()
+        }}
+        outputButton=button(outputSize.label).apply{setOnClickListener{
+            if(!flow.busy)AlertDialog.Builder(this@LeicaActivity).setTitle("出图尺寸").setSingleChoiceItems(BokehOutput.entries.map{it.label}.toTypedArray(),outputSize.ordinal){dialog,index->
+                outputSize=BokehOutput.entries[index];getPreferences(MODE_PRIVATE).edit().putInt("bokeh-output",index).apply();flow.outputChanged();dialog.dismiss();refresh();requestFocusPreview()
+            }.setNegativeButton("返回",null).show()
+        }}
+        workflowPanel.block(row(processingButton,outputButton))
+        compositionButton=button("智能构图").apply{setOnClickListener{openComposition()}}
+        workflowPanel.block(compositionButton);controls.addView(workflowPanel)
+        depthControls=section("景深")
+        apertureDial=ApertureDial(this);depthControls.addView(apertureDial,LinearLayout.LayoutParams(MATCH_PARENT,dp(102)))
+        val strip=LinearLayout(this)
+        apertureButtons=LegendaryMath.apertures.map{value->button("$value").apply{contentDescription="光圈$value，控制景深与焦外虚化";setOnClickListener{if(flow.canAdjustOptics && flow.blur){flow.aperture(value);refresh();requestFocusPreview()}}}}
+        apertureButtons.forEachIndexed{i,b->strip.addView(b,LinearLayout.LayoutParams(WRAP_CONTENT,WRAP_CONTENT).apply{if(i>0)marginStart=dp(5)})}
+        depthControls.addView(HorizontalScrollView(this).apply{isHorizontalScrollBarEnabled=false;addView(strip)})
+        focusButton=button("点选焦点").apply{setOnClickListener{if(!flow.busy && flow.hasPhoto){flow.chooseFocus();viewer=Viewer.ORIGINAL;applyViewer();status.text=if(flow.picking)"轻点目标内部。双指可放大，单指可平移。" else "已退出选焦。";refresh()}}}
+        regionButton=button("景深提示").apply{setOnClickListener{regionVisible=!regionVisible;refresh()}}
+        depthControls.block(row(focusButton,regionButton))
+        subjectButton=button(UiText.SUBJECT_LABEL).apply{contentDescription="主体保护开关；焦点仍只有一个，保护点可以多个，选好后统一计算";setOnClickListener{
+            if(!flow.busy){flow.toggleSubject();subjectWork.invalidate()
+                if(!flow.subjectEnabled)stageView.enableSubject(false)
+                else if(!flow.subjectReady && flow.hasPhoto && flow.blur){flow.chooseSubjects();viewer=Viewer.ORIGINAL;applyViewer()}
+                status.text=if(flow.subjectEnabled){if(flow.subjectReady)"主体保护已开启 · 复用本张照片逐点缓存的蒙版，不重新运行模型。" else "焦点只有一个，保护点可多个。连续轻点要保护的目标，选好后点击「统一计算」。"} else "主体保护已关闭，不运行主体保护计算；逐点结果保留；新增/移动只算缺失点，移除无需推理；重选焦点或换图清除缓存。"
+                refresh();if(!flow.subjectPicking && flow.subjectReady)requestFocusPreview()
+            }
+        }}
+        depthControls.block(subjectButton)
+        subjectSelectButton=button("选择保护点").apply{setOnClickListener{
+            if(!flow.busy && flow.hasPhoto && flow.subjectEnabled){flow.chooseSubjects();viewer=Viewer.ORIGINAL;applyViewer();status.text=if(flow.subjectPicking)"连续轻点多个目标；蓝色数字为保护点，金色十字为唯一焦点。选点不触发推理，选好后统一计算。" else "已退出保护点选择；已有选择保留。";refresh();if(!flow.subjectPicking && flow.subjectReady)requestFocusPreview()}
+        }}
+        subjectComputeButton=button("统一计算",true).apply{setOnClickListener{if(flow.canComputeSubjects)requestFocusPreview(computeSubject=true)}}
+        subjectUndoButton=button("移除指定点").apply{setOnClickListener{showSubjectRemoval()}}
+        subjectClearButton=button("清空保护点").apply{setOnClickListener{if(!flow.busy && flow.subjectEnabled){flow.clearSubjectPoints();worker.execute{engine.clearSubjectCache()};subjectSelectionChanged()}}}
+        subjectControls=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;block(row(subjectSelectButton,subjectComputeButton));block(row(subjectUndoButton,subjectClearButton))}
+        depthControls.block(subjectControls)
+        focusLegend=label("绿：清晰区 · 金：过渡区",11f);depthControls.block(focusLegend)
+        controls.addView(depthControls)
+        val log=section("处理记录");logPanel=log
+        status=label("导入照片，选择成像方式。深度图可单独查看，不会自动选焦。",12f).apply{setTextIsSelectable(true);accessibilityLiveRegion=View.ACCESSIBILITY_LIVE_REGION_POLITE};log.block(status);controls.addView(log)
+        compositionPanel=section("智能构图 · 当前编辑")
+        compositionInfo=label("选择方案 → 应用。不会重新调色或虚化，保存仍使用下方按钮。",12f).apply{accessibilityLiveRegion=View.ACCESSIBILITY_LIVE_REGION_POLITE};compositionPanel.block(compositionInfo)
+        compositionChoices=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};compositionPanel.block(compositionChoices)
+        compositionApply=button("应用",true).apply{setOnClickListener{applyComposition()}}
+        compositionRetry=button("重新分析").apply{setOnClickListener{analyseComposition()}}
+        compositionPanel.block(row(compositionApply,button("返回编辑").apply{setOnClickListener{leaveComposition()}}))
+        compositionPanel.block(compositionRetry);controls.addView(compositionPanel)
+        compositionBack=object:OnBackPressedCallback(false){override fun handleOnBackPressed(){leaveComposition()}}
+        onBackPressedDispatcher.addCallback(this,compositionBack)
+        editor=EditorLayout(this,photoPane,scroll);root.addView(editor,LinearLayout.LayoutParams(MATCH_PARENT,0,1f))
+        actions=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(0,dp(6),0,dp(4))}
+        progress=ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal).apply{max=7;progressTintList=android.content.res.ColorStateList.valueOf(0xffc4b8a6.toInt())};actions.addView(progress,LinearLayout.LayoutParams(MATCH_PARENT,dp(2)))
+        progressLabel=label("",11f,0xffd6cdbd.toInt()).apply{maxLines=2};actions.addView(progressLabel)
+        elapsedLabel=label("",10f);actions.addView(elapsedLabel)
+        pickButton=button("导入").apply{setOnClickListener{showPicker()}}
+        runButton=button("显影",true).apply{contentDescription="按当前参数生成成片";setOnClickListener{generate()}}
+        saveButton=button("保存").apply{setOnClickListener{save()}}
+        actions.block(row(pickButton,runButton,saveButton),6)
+        cancelButton=button("取消处理").apply{setOnClickListener{if(cancel!=null && !flow.cancelling){previewUpdates.discard();flow.cancel();cancel?.cancelled=true;engine.cancelRun();gaic.cancelRun();developView.skipPresentation();stageView.endLoading();compare.visibility=View.VISIBLE;progressMessage="正在取消 · 等待当前步骤退出";refresh()}}};actions.block(cancelButton,6);root.addView(actions)
+        compare.onFocusPoint={point->if(!flow.busy){flow.picked(point);subjectWork.invalidate();compare.subjectOverlay=null;stageView.clearSubject();worker.execute{engine.clearSubjectCache()};refresh();requestFocusPreview()}}
+        compare.onSubjectPoint={point->if(!flow.busy && flow.subjectPicking && flow.addSubjectPoint(point))subjectSelectionChanged()}
+        compare.onSubjectMoved={old,point->if(!flow.busy && flow.subjectEnabled && flow.moveSubjectPoint(old,point))subjectSelectionChanged()}
+        diagnostics=LiveDiagnostics(applicationContext,window,{workerThread},{"${UiText.operation(flow.operation)} · $progressMessage"},{lastFailure})
+        ViewCompat.setOnApplyWindowInsetsListener(root){v,i->val b=i.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout());v.setPadding(dp(14)+b.left,dp(8)+b.top,dp(14)+b.right,dp(8)+b.bottom);i}
+        setContentView(root);refresh();adaptChrome()
+    }
+    private fun acceptDepth(data:DepthVisualMath.Data){
+        if(visual===data)return
+        compare.inspection=null;gray?.recycle();thermal?.recycle()
+        visual=data;gray=Bitmap.createBitmap(data.gray,data.w,data.h,Bitmap.Config.ARGB_8888);thermal=Bitmap.createBitmap(data.thermal,data.w,data.h,Bitmap.Config.ARGB_8888);stageView.setDepth(data)
+    }
+    private fun clearDepthViews(){compare.inspection=null;gray?.recycle();thermal?.recycle();gray=null;thermal=null;visual=null;stageView.setDepth(null);stageView.hide()}
+    private fun selectViewer(value:Viewer){
+        if(!flow.hasPhoto || flow.busy)return
+        if(flow.picking)flow.chooseFocus()
+        flow.endSubjectPicking()
+        if(value in listOf(Viewer.RESULT,Viewer.COMPARE) && !flow.hasResult)return
+        viewer=value
+        if(value in listOf(Viewer.GRAY,Viewer.THERMAL,Viewer.RELIEF) && visual==null){
+            val uri=photo ?: return
+            operation(PhotoFlow.Operation.DEPTH,"解析照片空间"){
+                val c=checkNotNull(cancel);withContext(dispatcher){engine.inspectDepth(uri,c){message->runOnUiThread{stage(message)}}};c.check()
+                status.text="完整深度已缓存。黑白：白近黑远；伪彩：暖近冷远。空间视图可拖动旋转。"
+            }
+        }else applyViewer()
+    }
+    private fun applyViewer(){
+        compositionPreview.visibility=if(composing)View.VISIBLE else View.GONE
+        if(composing){compare.visibility=View.INVISIBLE;stageView.hide();return}
+        compare.crop=crop
+        if(depthCalculating || stageView.isLoading)return
+        if(viewer in listOf(Viewer.GRAY,Viewer.THERMAL,Viewer.RELIEF) && visual==null)viewer=Viewer.ORIGINAL
+        compare.inspection=when(viewer){Viewer.GRAY->gray;Viewer.THERMAL->thermal;else->null}
+        compare.mode=when(viewer){Viewer.RESULT->CompareView.Mode.RESULT;Viewer.COMPARE->CompareView.Mode.SLIDER;else->CompareView.Mode.ORIGINAL}
+        compare.visibility=if(viewer==Viewer.RELIEF)View.INVISIBLE else View.VISIBLE
+        if(viewer==Viewer.RELIEF)stageView.showRelief()else stageView.hide()
+        compare.animate().cancel();if(ValueAnimator.areAnimatorsEnabled()){compare.alpha=.55f;compare.animate().alpha(1f).setDuration(240).start()}else compare.alpha=1f
+        updateViewerLabels()
+    }
+    private fun updateViewerLabels(){
+        modeButtons.forEachIndexed{i,b->b.isSelected=Viewer.entries[i]==viewer}
+        previewTag.text=when{
+            composing->"智能构图 · 当前画面 · 选择后应用，不自动保存"
+            !flow.hasPhoto->"原图 · 双指缩放 · 原像素细节按需加载"
+            flow.subjectPicking->"选择保护点 · 已选${flow.subjectPoints.size}处 · 选好后统一计算"
+            flow.picking->"点选唯一焦点 / 不会增加保护点"
+            flow.resultStale && viewer in listOf(Viewer.RESULT,Viewer.COMPARE)->"上次成片 · ${currentCropPlan().label()} / 参数待重新显影；保存仅用现有像素"
+            viewer==Viewer.GRAY->"黑白深度 · 白近黑远 · 相对深度"
+            viewer==Viewer.THERMAL->"伪彩深度 · 暖近冷远 · 相对深度"
+            viewer==Viewer.RELIEF->if(flow.subjectReady && flow.blur)"主体保护 · 主体与焦平面对齐 · 拖动旋转，双击复位" else "空间 · 相对深度 · 拖动旋转，双击复位"
+            viewer in listOf(Viewer.RESULT,Viewer.COMPARE)->"${viewer.label} · ${currentCropPlan().label()} · ${if(flow.saved)"已保存" else "未保存"}"
+            else->"${viewer.label} · 光圈 ${flow.aperture}"
+        } + if(flow.blur && flow.subjectEnabled && flow.subjectReady && viewer==Viewer.ORIGINAL)" · 主体保护" else ""
+    }
+    private fun refresh(){
+        pickButton.isEnabled=!flow.busy;runButton.isEnabled=workflow.canStart(flow);saveButton.isEnabled=flow.canSave
+        compositionButton.isEnabled=!flow.busy && flow.hasPhoto
+        processingButton.isEnabled=!flow.busy;processingButton.text=workflow.label
+        compositionButton.visibility=if(workflow.onlyComposition)View.GONE else View.VISIBLE
+        compositionButton.text="智能构图"
+        outputButton.isEnabled=!flow.busy;outputButton.text=outputSize.label
+        depthControls.visibility=if(flow.blur && !workflow.onlyComposition && !composing)View.VISIBLE else View.GONE
+        apertureDial.setAperture(flow.aperture)
+        apertureButtons.forEachIndexed{i,b->b.isSelected=LegendaryMath.apertures[i]==flow.aperture;b.isEnabled=flow.canAdjustOptics && flow.blur}
+        focusButton.isEnabled=!flow.busy && flow.hasPhoto && flow.blur;focusButton.isSelected=flow.picking
+        focusButton.text=when{flow.picking->"退出选焦";flow.focus!=null->"重选焦点";else->"点选焦点"}
+        regionButton.isSelected=regionVisible;regionButton.isEnabled=flow.blur && flow.canAdjustOptics
+        subjectButton.isEnabled=!flow.busy
+        subjectButton.isSelected=flow.subjectEnabled
+        subjectButton.text=UiText.SUBJECT_LABEL
+        subjectButton.contentDescription="主体保护 · ${if(flow.subjectEnabled)"已开启" else "已关闭"} · 已完成${flow.subjectCompletedCount}/${flow.subjectPoints.size}点"
+        subjectControls.visibility=if(flow.subjectEnabled)View.VISIBLE else View.GONE
+        subjectSelectButton.isEnabled=!flow.busy && flow.hasPhoto && flow.blur
+        subjectSelectButton.isSelected=flow.subjectPicking;subjectSelectButton.text=if(flow.subjectPicking)"结束选点（${flow.subjectPoints.size}）" else "选择保护点（${flow.subjectPoints.size}）"
+        val subjectTicket=flow.subjectTicket();val subjectQueued=subjectWork.needs(subjectTicket)
+        subjectComputeButton.isEnabled=flow.canComputeSubjects && !subjectQueued && (!flow.subjectReady || !subjectWork.isPresented(subjectTicket))
+        subjectComputeButton.text=when{flow.focus==null->"先选一个焦点";subjectQueued->"计算中 · ${flow.subjectCompletedCount}/${flow.subjectPoints.size}点";flow.subjectReady && !subjectWork.isPresented(subjectTicket)->"应用已算结果";flow.subjectReady->"已完成 ${flow.subjectCompletedCount}/${flow.subjectPoints.size}点";flow.subjectCompletedCount>0->"计算新增/待算 ${flow.subjectPendingCount}点";else->"统一计算"}
+        subjectUndoButton.isEnabled=!flow.busy && flow.subjectPoints.isNotEmpty();subjectClearButton.isEnabled=subjectUndoButton.isEnabled
+        focusLegend.text="金色焦点 / 蓝色编号均可拖动 · 松手提交 · 蓝色区域为已完成保护"
+        compare.showSubject=flow.blur && flow.subjectEnabled && flow.subjectCompletedCount>0
+        compare.pointsEditable=!flow.busy && flow.blur
+        compare.subjectPicking=flow.subjectPicking;compare.subjectPoints=if(flow.blur && flow.subjectEnabled)flow.subjectPoints else emptyList()
+        compare.focusPicking=flow.picking;compare.focusPoint=if(flow.blur)flow.focus else null;compare.showFocusRegion=flow.blur && regionVisible && !flow.subjectPicking
+        modeButtons.forEachIndexed{i,b->b.isEnabled=!flow.busy && flow.hasPhoto && (Viewer.entries[i] !in listOf(Viewer.RESULT,Viewer.COMPARE) || flow.hasResult)}
+        emptyState.visibility=if(flow.hasPhoto)View.GONE else View.VISIBLE
+        runButton.text=when{workflow.onlyComposition || (workflow.composeAfter && current!=null && !flow.resultStale)->"选择构图";flow.operation==PhotoFlow.Operation.GENERATE->"显影中";flow.picking->"请点焦点";flow.hasPhoto && flow.blur && flow.focus==null->"先选焦点";flow.blur && flow.subjectEnabled && !flow.subjectReady->"先计算保护";flow.subjectPicking->"请结束选点";workflow.composeAfter->"显影并构图";flow.hasResult->"重新显影";else->"显影"}
+        runButton.contentDescription=runButton.text
+        saveButton.text=if(flow.resultStale)"保存上次" else if(flow.saved)"已保存" else "保存"
+        cancelButton.visibility=if(flow.operation in listOf(PhotoFlow.Operation.GENERATE,PhotoFlow.Operation.FOCUS_PREVIEW,PhotoFlow.Operation.DEPTH,PhotoFlow.Operation.COMPOSITION))View.VISIBLE else View.GONE
+        cancelButton.isEnabled=!flow.cancelling;cancelButton.text=if(flow.cancelling)"正在取消…" else "取消处理"
+        progress.visibility=if(flow.busy)View.VISIBLE else View.GONE;progressLabel.visibility=progress.visibility
+        elapsedLabel.visibility=if(completedGenerationMs!=null && !flow.busy)View.VISIBLE else View.GONE
+        completedGenerationMs?.let{elapsedLabel.text="显影用时 ${ProcessingTime.seconds(it)}${if(flow.resultStale)" · 参数待应用" else ""}"}
+        workflowPanel.visibility=if(composing)View.GONE else View.VISIBLE
+        logPanel.visibility=if(composing)View.GONE else View.VISIBLE
+        compositionPanel.visibility=if(composing)View.VISIBLE else View.GONE
+        compositionBack.isEnabled=composing
+        compositionApply.isEnabled=composing && !flow.busy && compositionItems.isNotEmpty()
+        compositionRetry.isEnabled=composing && !flow.busy
+        if(composing){pickButton.isEnabled=false;runButton.isEnabled=false;saveButton.isEnabled=false;modeButtons.forEach{it.isEnabled=false}}
+        for(i in 0 until compositionChoices.childCount){val v=compositionChoices.getChildAt(i);v.isEnabled=!flow.busy;v.isSelected=i==compositionSelected;v.setBackgroundColor(if(i==compositionSelected)0xff423d36.toInt()else 0xff242526.toInt())}
+        if(composing && compositionItems.isNotEmpty() && !flow.busy)showCompositionSize()
+        updateViewerLabels();updateProgress()
+    }
+    private fun adaptChrome(){
+        val cfg=resources.configuration;val compact=EditorLayoutPolicy.compactChrome(cfg.screenHeightDp,cfg.fontScale)
+        apertureDial.layoutParams.height=dp((102*cfg.fontScale.coerceAtLeast(1f)).toInt())
+        val target=if(compact && editor.expanded)controls else root
+        if(actions.parent!==target){(actions.parent as? android.view.ViewGroup)?.removeView(actions);if(target===controls)controls.addView(actions,0,LinearLayout.LayoutParams(MATCH_PARENT,WRAP_CONTENT))else root.addView(actions,LinearLayout.LayoutParams(MATCH_PARENT,WRAP_CONTENT))};editor.requestLayout()
+    }
+    private fun publishDiagnostics(snapshot:LiveDiagnostics.Snapshot){diagnosticsText?.text=snapshot.summary;diagnosticsDetails?.text=snapshot.details}
+    private fun showDiagnostics(){
+        if(diagnosticsDialog?.isShowing==true)return
+        val body=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(16),dp(10),dp(16),dp(10))}
+        val summaryView=label("正在采样本机进程…",12f,0xffddd5c8.toInt()).apply{setTextIsSelectable(true)};diagnosticsText=summaryView;body.addView(summaryView)
+        val detail=label("正在读取设备与线程…",11f).apply{typeface=Typeface.MONOSPACE;setTextIsSelectable(true);visibility=View.GONE};diagnosticsDetails=detail
+        val toggle=button("展开原始详情").apply{contentDescription="展开机型标识、工作线程调用栈与最近错误";setOnClickListener{
+            if(ValueAnimator.areAnimatorsEnabled())TransitionManager.beginDelayedTransition(body,AutoTransition().apply{duration=220})
+            val expand=detail.visibility!=View.VISIBLE;detail.visibility=if(expand)View.VISIBLE else View.GONE;text=if(expand)"收起原始详情" else "展开原始详情";isSelected=expand
+        }}
+        body.block(toggle);body.block(detail)
+        val scroll=ScrollView(this).apply{addView(body)}
+        diagnosticsDialog=AlertDialog.Builder(this).setTitle("实时监测").setView(scroll).setPositiveButton("关闭",null).create().also{dialog->dialog.setOnDismissListener{diagnostics.stop();diagnosticsText=null;diagnosticsDetails=null;diagnosticsDialog=null};dialog.show()}
+        diagnostics.start(lifecycleScope,::publishDiagnostics)
+    }
+    private fun updateProgress(){if(::progressLabel.isInitialized)progressLabel.text="$progressMessage · ${ProcessingTime.seconds(SystemClock.elapsedRealtime()-phaseStarted)}"}
+    private fun stage(message:String){if(!flow.busy || isDestroyed)return;val key=message.substringBefore(" · ");if(key!=phase){phase=key;phaseStarted=SystemClock.elapsedRealtime()};progressMessage=message;if(composing)compositionInfo.text=message;val n=message.substringBefore('/').toIntOrNull();progress.isIndeterminate=n==null;if(n!=null)progress.progress=n;updateProgress()}
+    private fun operation(op:PhotoFlow.Operation,message:String,afterSuccess:()->Unit={},action:suspend()->Unit){
+        if(flow.busy)return
+        if(op==PhotoFlow.Operation.GENERATE || op==PhotoFlow.Operation.PREVIEW)completedGenerationMs=null
+        cancel=if(op in listOf(PhotoFlow.Operation.GENERATE,PhotoFlow.Operation.FOCUS_PREVIEW,PhotoFlow.Operation.DEPTH,PhotoFlow.Operation.COMPOSITION))Cancel()else null
+        flow.begin(op);started=SystemClock.elapsedRealtime();phaseStarted=started;phase="";progressMessage=message;progress.isIndeterminate=true;refresh()
+        ticker=lifecycleScope.launch{while(isActive){delay(1000);updateProgress()}}
+        job=lifecycleScope.launch{
+            var settled=false;var completed=false
+            try{withContext(Dispatchers.IO){engine.memory.begin(message)};cancel?.check();action();if(op==PhotoFlow.Operation.GENERATE && completedGenerationMs==null)completedGenerationMs=SystemClock.elapsedRealtime()-started;completed=true;settled=true}
+            catch(e:CancellationException){settled=true;status.text="已取消，未发布半成品。已有结果仍可保存。"}
+            catch(e:Exception){propagateFatalCause(e);settled=true;if(cancel?.cancelled==true)status.text="已取消，可以重新开始。" else {lastFailure=e.stackTraceToString();status.text=UiText.failure(e)}}
+            finally{if(settled){
+                withContext(NonCancellable+Dispatchers.IO){engine.memory.finish()}
+                val again=op==PhotoFlow.Operation.FOCUS_PREVIEW && completed && cancel?.cancelled!=true && previewUpdates.pending
+                if(op==PhotoFlow.Operation.FOCUS_PREVIEW && !completed){previewUpdates.discard();stageView.enableSubject(false);viewer=Viewer.ORIGINAL}
+                val success=completed && cancel?.cancelled!=true
+                if(op==PhotoFlow.Operation.GENERATE)developView.reset()
+                if(op==PhotoFlow.Operation.COMPOSITION && !success){compositionPreview.restoreSelection();compositionInfo.text=status.text}
+                if(op==PhotoFlow.Operation.FOCUS_PREVIEW && !success)subjectWork.abort()
+                cancel=null;ticker?.cancel();flow.finish();depthCalculating=false
+                if(!isDestroyed && !isFinishing){if(leaveCompositionWhenIdle){leaveCompositionWhenIdle=false;closeComposition()};if(!stageView.isLoading)applyViewer();refresh();if(again)startFocusPreview();if(success)afterSuccess()}
+            }}
+        }
+    }
+    private fun onPicked(uri:Uri){
+        previewUpdates.discard();subjectWork.invalidate()
+        operation(PhotoFlow.Operation.PREVIEW,"读取原图"){
+            val local=withContext(dispatcher){val scope=currentCoroutineContext();photoImports.import(uri){scope.ensureActive()}}
+            val (bmp,dimensions)=withContext(dispatcher){engine.loadPreview(local) to RegionPhoto(applicationContext,local).use{it.width to it.height}}
+            crop=CompositionGeometry.FULL;compare.crop=crop;sourceWidth=dimensions.first;sourceHeight=dimensions.second
+            clearDepthViews();developView.reset();stageView.setPhoto(bmp);compare.setSources(local,null);compare.original=bmp;compare.result=null;compare.resetViewport();compare.focusOverlay=null;compare.subjectOverlay=null
+            photo=local;current=null;resultAppearance=null;flow.photoLoaded();viewer=Viewer.ORIGINAL
+            withContext(dispatcher){engine.clearCache();engine.clearDepthCache()}
+            status.text="照片已就绪。选成像方式后可手动点焦；也可直接打开深度视图。"
+        }
+    }
+    private fun showSubjectRemoval(){
+        if(flow.busy || !flow.subjectEnabled || flow.subjectPoints.isEmpty())return
+        val points=flow.subjectPoints.toList();val ticket=flow.subjectTicket()
+        AlertDialog.Builder(this).setTitle("移除指定保护点（无需重新推理）")
+            .setItems(points.mapIndexed{i,p->"${i+1}号点 · 横向${(p.x*100).toInt()}% / 纵向${(p.y*100).toInt()}%"}.toTypedArray()){_,index->
+                if(!flow.busy && flow.subjectTicket()==ticket && flow.removeSubjectPoint(points[index]))subjectSelectionChanged()
+            }.setNegativeButton("返回",null).show()
+    }
+    private fun subjectSelectionChanged(){
+        subjectWork.invalidate();previewUpdates.discard();compare.subjectOverlay=null;stageView.clearSubject()
+        status.text="已选${flow.subjectPoints.size}点，已完成${flow.subjectCompletedCount}点；新增或移动只计算缺失点，移除不运行模型。可拖动蓝色编号调整位置。"+if(flow.focus==null)"请先另选一个景深焦点。" else ""
+        viewer=Viewer.ORIGINAL;applyViewer();refresh();refreshCachedSubjects()
+    }
+    /** Selection edits only merge existing alpha; no decode, depth or subject model call. */
+    private fun refreshCachedSubjects(){
+        val uri=photo?:return;val ticket=flow.subjectTicket();val bmp=compare.original?:return
+        val w=bmp.width;val h=bmp.height;val focus=flow.focus;val readEpoch=subjectWork.epoch
+        lifecycleScope.launch{
+            try{
+                val state=withContext(dispatcher){
+                    val done=engine.completedSubjects(uri,ticket.points)
+                    val alpha=engine.cachedSubjects(uri,ticket.points,Cancel())
+                    Triple(done,alpha?.let{SubjectProtectionMath.overlay(it,w,h,Cancel())},engine.cachedSubjectMotion(uri,ticket.points,focus,Cancel()))
+                }
+                if(photo==uri && flow.subjectTicket()==ticket && subjectWork.acceptsRead(readEpoch) && !flow.busy && flow.subjectEnabled && !isDestroyed){
+                    val overlay=state.second?.let{Bitmap.createBitmap(it,w,h,Bitmap.Config.ARGB_8888)}
+                    flow.acceptSubjectCompletion(ticket,state.first)
+                    compare.subjectOverlay=overlay
+                    if(flow.subjectReady && overlay!=null)subjectWork.publish(ticket,state.first,true)
+                    state.third?.let{stageView.presentSubject(it,false)};applyViewer();refresh()
+                }
+            }catch(e:CancellationException){throw e}catch(e:Exception){propagateFatalCause(e);if(flow.subjectTicket()==ticket && subjectWork.acceptsRead(readEpoch) && !flow.busy){lastFailure=e.stackTraceToString();status.text=UiText.failure(e)}}
+        }
+    }
+    private fun requestFocusPreview(computeSubject:Boolean=false){
+        if(photo==null || flow.focus==null || !flow.blur || !flow.canAdjustOptics)return
+        if(computeSubject){
+            if(!flow.canComputeSubjects || subjectWork.needs(flow.subjectTicket()))return
+            subjectWork.request(flow.subjectTicket());flow.endSubjectPicking()
+        }else if(flow.subjectPicking)return
+        subjectWork.changed();previewUpdates.request();compare.focusOverlay=null;viewer=Viewer.ORIGINAL
+        if(!flow.busy){applyViewer();startFocusPreview()}
+        else {if(computeSubject)stage("主体保护 · 请求已排队，景深提示后继续计算待完成点");refresh()}
+    }
+    private fun startFocusPreview(){
+        val uri=photo ?: return;val point=flow.focus ?: return
+        if(flow.busy || !flow.blur || !previewUpdates.pending)return
+        val selectedPoints=flow.subjectPoints.toList();val subjectTicket=flow.subjectTicket()
+        subjectWork.changed()
+        operation(PhotoFlow.Operation.FOCUS_PREVIEW,if(subjectWork.needs(subjectTicket))"主体保护 · 准备计算待完成点" else "计算景深提示"){
+            val c=checkNotNull(cancel)
+            try{while(true){
+                delay(90);c.check();val ticket=previewUpdates.ticket;val ap=flow.aperture;val size=outputSize
+                // Re-evaluate each pass: a subject request may arrive during an optical-only pass.
+                val includeSubject=flow.subjectEnabled && (flow.subjectReady || subjectWork.needs(subjectTicket))
+                val preview=withContext(dispatcher){engine.focusPreview(uri,point,ap,size,c,subjectEnabled=includeSubject,subjectPoints=selectedPoints,onSubjectCommitted={done->runOnUiThread{
+                    if(!isDestroyed && photo==uri && cancel===c && !c.cancelled && flow.acceptSubjectCompletion(subjectTicket,done)){subjectWork.changed();refresh()}
+                }}){message->runOnUiThread{if(cancel===c)stage(message)}}}
+                c.check();currentCoroutineContext().ensureActive()
+                if(photo!=uri || flow.subjectTicket()!=subjectTicket)throw CancellationException("保护选择已变更")
+                flow.acceptSubjectCompletion(subjectTicket,preview.completedSubjects)
+                if(!previewUpdates.publish(ticket))continue
+                val overlay=preview.overlay
+                if(overlay==null){flow.focusUnreliable();subjectWork.invalidate();stageView.clearSubject();compare.subjectOverlay=null;withContext(dispatcher){engine.clearSubjectCache()};status.text="该点深度不可靠，未自动换焦点。请点选目标内部。"}
+                else{
+                    if(includeSubject)check(preview.subjectProtected && preview.completedSubjects.toSet()==selectedPoints.toSet() && preview.subjectOverlay!=null){"保护结果尚未完整应用，请重新计算待完成点"}
+                    val focusBitmap=Bitmap.createBitmap(overlay.argb,overlay.width,overlay.height,Bitmap.Config.ARGB_8888)
+                    val subjectBitmap=preview.subjectOverlay?.let{Bitmap.createBitmap(it,overlay.width,overlay.height,Bitmap.Config.ARGB_8888)}
+                    compare.focusOverlay=focusBitmap
+                    if(preview.subjectProtected){
+                        compare.subjectOverlay=subjectBitmap
+                        subjectWork.publish(subjectTicket,preview.completedSubjects,subjectBitmap!=null)
+                        viewer=Viewer.RELIEF
+                    }
+                    status.text="光圈 $ap · ${if(preview.reusedDepth)"复用深度" else "深度就绪"}\n绿：清晰区 · 金：过渡区。提示不写入成片。"+when{
+                        preview.subjectProtected->"\n主体保护 · ${preview.completedSubjects.size}/${selectedPoints.size}点已计算并应用；蓝色范围为实际保护范围。"
+                        flow.subjectEnabled && flow.subjectPendingCount>0->"\n本次仅更新景深提示；还有${flow.subjectPendingCount}个保护点待算，请点击「计算新增/待算」。"
+                        else->""
+                    }
+                };break
+            }}finally{
+                // Actual cache commits survive later presentation errors. Never consume a request here.
+                val done=withContext(NonCancellable+dispatcher){engine.completedSubjects(uri,selectedPoints)}
+                if(photo==uri && flow.acceptSubjectCompletion(subjectTicket,done))subjectWork.changed()
+            }
+        }
+    }
+    private fun generate(){
+        val uri=photo ?: return;if(!workflow.canStart(flow))return
+        if(workflow.onlyComposition || (workflow.composeAfter && current!=null && !flow.resultStale)){openComposition();return}
+        val selectedWorkflow=workflow
+        val blur=flow.blur;val subject=flow.subjectEnabled;val selectedPoints=flow.subjectPoints.toList();val color=flow.colorEnabled;val point=flow.focus;val ap=flow.aperture;val size=outputSize
+        previewUpdates.discard()
+        operation(PhotoFlow.Operation.GENERATE,"准备${flow.processingMode.label}",afterSuccess={
+            if(selectedWorkflow.shouldOpenComposition(true,false)){
+                if(!blur || resultAppearance?.blur==true){pendingComposition=true;continueComposition()}
+                else status.text="${status.text}\n未自动进入构图：虚化未成功，请重新点选焦点。已有成片保留。"
+            }
+        }){
+            val c=checkNotNull(cancel)
+            compare.original?.let{developView.beginSource(it)}
+            val unpublished=DevelopTransfer<LeicaEngine.Result>{r->r.original.recycle();r.result.recycle();r.file.delete()}
+            try {
+            val result=withContext(dispatcher){engine.process(uri,LeicaStyle.LEGENDARY,c,blur,point,ap,size,color,subjectEnabled=subject,subjectPoints=selectedPoints,renderSize=if(crop==CompositionGeometry.FULL)null else EditorCrop.renderPlan(sourceWidth,sourceHeight,crop,size).let{it.workWidth to it.workHeight},onVisual={event->
+                runOnUiThread{
+                    if(isDestroyed || isFinishing || cancel!==c || c.cancelled){event.dispose();return@runOnUiThread}
+                    stageView.hide();compare.visibility=View.INVISIBLE;developView.accept(event)
+                }
+            }){message->runOnUiThread{if(cancel===c)stage(message)}}.also{unpublished.offer(it)}}
+            try{
+                c.check();currentCoroutineContext().ensureActive()
+                // Presentation waits for real result data; inference is never delayed by the animation.
+                completedGenerationMs=result.totalMs
+                stage("生成完成 · 正在呈现")
+                suspendCancellableCoroutine<Unit>{cont->
+                    developView.finish(result.result,result.rendered){completed->
+                        if(cont.isActive){if(completed)cont.resume(Unit)else cont.cancel(CancellationException("已取消呈现"))}
+                    }
+                    cont.invokeOnCancellation{runOnUiThread{if(cancel===c)developView.reset()}}
+                }
+                c.check();currentCoroutineContext().ensureActive()
+            }catch(e:Exception){unpublished.close();throw e}
+            check(unpublished.take()===result)
+            current=result;resultAppearance=CompositionAppearance(color,result.rendered,point,ap);flow.generated();if(result.subjectProtected)flow.subjectCompleted()
+            stageView.setPhoto(result.original);compare.setSources(uri,Uri.fromFile(result.file));compare.original=result.original;compare.result=result.result;viewer=Viewer.RESULT
+            withContext(dispatcher){engine.clearCache(result.file)}
+            status.text="${currentCropPlan().label()} · ${result.reason}\n${result.hardwareSummary}\n${result.stageSummary}"
+            }finally{unpublished.close()}
+        }
+    }
+    private fun continueComposition(){
+        if(pendingComposition && !flow.busy && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)){
+            pendingComposition=false;openComposition()
+        }
+    }
+    private fun currentCropPlan():EditorCrop.Plan = EditorCrop.plan(current?.width?:sourceWidth,current?.height?:sourceHeight,crop,outputSize)
+    private fun openComposition(){
+        if(flow.busy || photo==null || composing)return
+        composing=true;editor.expanded=true;applyViewer();refresh();analyseComposition()
+    }
+    private fun analyseComposition(){
+        if(flow.busy || !composing)return
+        val uri=current?.let{Uri.fromFile(it.file)}?:photo?:return
+        val fullW=current?.width?:sourceWidth;val fullH=current?.height?:sourceHeight
+        val parent=CompositionGeometry.snapped(crop,fullW,fullH)
+        val box=CompositionGeometry.pixels(parent,fullW,fullH)
+        // Existing results are not secretly rerendered to satisfy the old pixel budget filter.
+        val budget=if(current!=null)BokehOutput.ORIGINAL else outputSize
+        compositionPreview.close();compositionLoaded?.bitmap?.recycle();compositionLoaded=null
+        compositionLoadingBitmap?.recycle();compositionLoadingBitmap=null
+        compositionItems=emptyList();compositionChoices.removeAllViews();compositionSelected=0
+        compositionPreview.beginAnalysis()
+        operation(PhotoFlow.Operation.COMPOSITION,"分析当前画面 · GAIC纯模型评分"){
+            val c=checkNotNull(cancel)
+            val transfer=DevelopTransfer<CompositionFiles.Loaded>{it.bitmap.recycle()}
+            try {
+                val (data,items)=withContext(dispatcher){
+                    val loaded=CompositionFiles.loadSource(applicationContext,uri,parent,c){decoded->
+                        val display=checkNotNull(decoded.copy(Bitmap.Config.ARGB_8888,false))
+                        runOnUiThread{
+                            if(isDestroyed || isFinishing || cancel!==c || c.cancelled || !composing){display.recycle();return@runOnUiThread}
+                            val old=compositionLoadingBitmap;compositionLoadingBitmap=display
+                            compositionPreview.setPhoto(display,box.w,box.h);old?.recycle()
+                        }
+                    }.also{transfer.offer(it)}
+                    loaded to gaic.analyse(applicationContext,loaded.image,loaded.sourceW,loaded.sourceH,budget,c)
+                }
+                c.check();currentCoroutineContext().ensureActive();check(transfer.take()===data)
+                compositionLoaded=data;compositionItems=items
+                compositionPreview.setPhoto(data.bitmap,data.sourceW,data.sourceH)
+                compositionLoadingBitmap?.recycle();compositionLoadingBitmap=null
+                compositionPreview.showProposals(items.map{it.crop},0)
+                items.forEachIndexed{index,item->
+                    val card=LinearLayout(this@LeicaActivity).apply{
+                        gravity=Gravity.CENTER_VERTICAL;setPadding(dp(8),dp(8),dp(8),dp(8));isFocusable=true;isClickable=true
+                        contentDescription=item.title;setOnClickListener{if(!flow.busy){compositionSelected=index;compositionPreview.selectProposal(index);refresh()}}
+                    }
+                    card.addView(CompositionThumbnail(this@LeicaActivity,data.bitmap,item.crop),LinearLayout.LayoutParams(dp(80),dp(60)))
+                    card.addView(label(item.title,13f),LinearLayout.LayoutParams(0,WRAP_CONTENT,1f).apply{marginStart=dp(10)})
+                    compositionChoices.block(card,6)
+                }
+                status.text="构图分析完成 · 应用只更新裁框，不自动保存"
+            }finally{transfer.close()}
+        }
+    }
+    private fun selectedCompositionCrop():CompositionGeometry.Crop {
+        val w=current?.width?:sourceWidth;val h=current?.height?:sourceHeight
+        return EditorCrop.combine(crop,compositionItems[compositionSelected].crop,w,h)
+    }
+    private fun showCompositionSize(){
+        val w=current?.width?:sourceWidth;val h=current?.height?:sourceHeight
+        val plan=EditorCrop.plan(w,h,selectedCompositionCrop(),outputSize)
+        val target=outputSize.longEdge
+        val limited=target!=null && maxOf(plan.width,plan.height)<target
+        compositionInfo.text="${if(current!=null)"现有成片" else "当前原图"} · ${plan.label()}${if(limited)"（裁后可用像素，不放大补足$target）" else ""}\n选择方案 → 应用；不重新调色、虚化，不自动保存。"
+    }
+    private fun applyComposition(){
+        if(flow.busy || !composing || compositionItems.isEmpty())return
+        crop=selectedCompositionCrop()
+        flow.compositionApplied()
+        if(current==null){compare.result=compare.original;compare.setSources(photo,photo)}
+        compare.crop=crop;viewer=Viewer.RESULT
+        val dimensions=currentCropPlan().label()
+        closeComposition()
+        status.text="已应用构图 · $dimensions · 未保存\n复用当前像素，未重新调色或虚化。点击保存才导出。"
+    }
+    private fun leaveComposition(){
+        if(flow.busy){leaveCompositionWhenIdle=true;cancel?.cancelled=true;gaic.cancelRun();if(!flow.cancelling)flow.cancel();refresh()}
+        else closeComposition()
+    }
+    private fun closeComposition(){
+        composing=false;compositionPreview.close();compositionPreview.visibility=View.GONE
+        compositionChoices.removeAllViews();compositionItems=emptyList()
+        compositionLoaded?.bitmap?.recycle();compositionLoaded=null;compositionLoadingBitmap?.recycle();compositionLoadingBitmap=null
+        applyViewer();refresh()
+    }
+    private fun save(){
+        if(!flow.canSave || composing)return
+        val uri=current?.let{Uri.fromFile(it.file)}?:photo?:return
+        val plan=currentCropPlan()
+        operation(PhotoFlow.Operation.SAVE,"保存成片 · ${plan.label()}"){
+            val location=withContext(dispatcher){CompositionFiles.saveSource(applicationContext,uri,plan.crop,Cancel(),plan.width to plan.height)}
+            flow.saved();status.text="已保存 ${plan.label()}\n$location";BlurToast.show(this@LeicaActivity,"成片已保存")
+        }
+    }
+    override fun onPostResume(){super.onPostResume();continueComposition()}
+    override fun onResume(){super.onResume();if(::compositionPreview.isInitialized)compositionPreview.setActive(true);if(::developView.isInitialized)developView.setActive(true);if(::stageView.isInitialized)stageView.setActive(true);if(diagnosticsDialog?.isShowing==true)diagnostics.start(lifecycleScope,::publishDiagnostics)}
+    override fun onPause(){if(::compositionPreview.isInitialized)compositionPreview.setActive(false);if(::developView.isInitialized)developView.setActive(false);if(::stageView.isInitialized)stageView.setActive(false);if(::diagnostics.isInitialized)diagnostics.stop();super.onPause()}
+    override fun onConfigurationChanged(config:Configuration){super.onConfigurationChanged(config);if(::editor.isInitialized)adaptChrome()}
+    override fun onTrimMemory(level:Int){super.onTrimMemory(level);engine.memory.trim(level)}
+    override fun onLowMemory(){super.onLowMemory();engine.memory.trim(15)}
+    override fun onDestroy(){
+        previewUpdates.discard();cancel?.cancelled=true;engine.cancelRun();gaic.cancelRun();compositionPreview.close();compositionLoaded?.bitmap?.recycle();compositionLoadingBitmap?.recycle();job?.cancel();ticker?.cancel();diagnostics.stop();diagnosticsDialog?.dismiss();developView.close();stageView.close();clearDepthViews();compare.closeSources();compare.original=null;compare.result=null
+        worker.execute{try{engine.close()}finally{engine.clearCache();photoImports.close()}};worker.shutdown();super.onDestroy()
+    }
+}

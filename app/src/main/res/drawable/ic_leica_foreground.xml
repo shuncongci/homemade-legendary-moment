@@ -1,0 +1,6 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <!-- Flat camera outline: no simulated material, optical glass or sparkle. -->
+    <path android:fillColor="@android:color/transparent" android:strokeColor="#C4B8A6" android:strokeWidth="3" android:strokeLineJoin="round" android:pathData="M33,39H43L47,34H61L65,39H75Q80,39 80,44V68Q80,73 75,73H33Q28,73 28,68V44Q28,39 33,39Z"/>
+    <path android:fillColor="@android:color/transparent" android:strokeColor="#C4B8A6" android:strokeWidth="3" android:pathData="M54,45A11,11 0,1 1,54,67A11,11 0,1 1,54,45Z"/>
+    <path android:fillColor="@android:color/transparent" android:strokeColor="#C4B8A6" android:strokeWidth="3" android:strokeLineCap="round" android:pathData="M70,46H73"/>
+</vector>
