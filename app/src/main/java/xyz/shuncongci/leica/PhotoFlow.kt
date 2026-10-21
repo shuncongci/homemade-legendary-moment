@@ -17,6 +17,8 @@ class PhotoFlow {
     var hasPhoto = false; private set
     var hasResult = false; private set
     var saved = false; private set
+    var parametersExpanded = true; private set
+    fun showParameters(value:Boolean){parametersExpanded=value}
     var blur = false; private set
     var colorEnabled = true; private set
     val processingMode get() = ProcessingMode.from(colorEnabled,blur)
@@ -75,14 +77,15 @@ class PhotoFlow {
     val canSave get() = !busy && hasResult && !saved
     fun begin(op: Operation) { check(!busy); operation=op; picking=false;subjectPicking=false; cancelling=false }
     fun finish() { operation=Operation.IDLE; cancelling=false }
-    fun photoLoaded() { hasPhoto=true;hasResult=false;saved=false;resultStale=false;focus=null;picking=false;subjectInvalidated();subjectPoints=emptyList();subjectPicking=false }
+    fun photoLoaded() { hasPhoto=true;hasResult=false;saved=false;resultStale=false;focus=null;picking=false;subjectInvalidated();subjectPoints=emptyList();subjectPicking=false;parametersExpanded=true }
     fun photoFailed() { hasPhoto=false;hasResult=false;saved=false;resultStale=false;focus=null;picking=false;subjectInvalidated();subjectPoints=emptyList();subjectPicking=false }
     fun toggleBlur() { check(!busy);blur=!blur;if(!blur)colorEnabled=true;picking=false;subjectPicking=false;parametersChanged() }
     fun chooseFocus() { check(!busy && hasPhoto && blur);subjectPicking=false;picking=!picking }
     fun picked(point: LegendaryMath.Point) { check(!busy && blur && hasPhoto);focus=point;picking=false;subjectPicking=false;subjectInvalidated();parametersChanged() }
     fun aperture(value: Float) { check(canAdjustOptics);FullFrameOptics.checkAperture(value);if(aperture!=value){aperture=value;parametersChanged()} }
-    fun generated() { hasResult=true;saved=false;resultStale=false }
-    fun compositionApplied() { check(!busy && hasPhoto);hasResult=true;saved=false;picking=false;subjectPicking=false }
+    /** Called only after the real result is presented and committed, never for a preview/failure. */
+    fun generated() { hasResult=true;saved=false;resultStale=false;parametersExpanded=false }
+    fun compositionApplied() { check(!busy && hasPhoto);hasResult=true;saved=false;picking=false;subjectPicking=false;parametersExpanded=false }
     fun saved() { saved=true }
     fun focusUnreliable() { check(operation==Operation.FOCUS_PREVIEW);focus=null;picking=false;subjectInvalidated() }
     fun cancel() { check(operation==Operation.GENERATE || operation==Operation.FOCUS_PREVIEW || operation==Operation.DEPTH || operation==Operation.COMPOSITION);cancelling=true }

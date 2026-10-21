@@ -9,6 +9,8 @@ enum class PhotoWorkflow(val label:String,val processing:ProcessingMode?,val com
     COLOR_COMPOSITION("调色＋构图",ProcessingMode.COLOR_ONLY,true),
     BLUR_COMPOSITION("虚化＋构图",ProcessingMode.BLUR_ONLY,true),
     ALL("调色＋虚化＋构图",ProcessingMode.COLOR_AND_BLUR,true);
+    val allowsOutputSelection get()=processing?.blurEnabled==true
+    fun output(selected:BokehOutput)=if(allowsOutputSelection)selected else BokehOutput.ORIGINAL
     val onlyComposition get()=processing==null
     fun canStart(flow:PhotoFlow)=if(onlyComposition)!flow.busy && flow.hasPhoto else flow.canGenerate
     fun shouldOpenComposition(completed:Boolean,cancelled:Boolean)=composeAfter && completed && !cancelled

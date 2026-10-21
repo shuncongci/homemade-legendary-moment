@@ -137,7 +137,7 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
         val (sw,sh)=bounds(uri);val (w,h)=NativeImageMath.size(sw,sh,orientation(uri))
         analyzedDepth(uri,w,h,cancel,progress)
     }
-    /** Temporary 2048-fit PNG files; never touches the user source/gallery. */
+    /** Temporary rendered PNG files; never touches the user source/gallery. */
     fun clearCache(keep: File? = null) {
         cacheDir.listFiles()?.filter { it != keep }?.forEach { it.delete() }
     }
@@ -182,7 +182,7 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
         return Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true).also { if (it !== bmp) bmp.recycle() }
     }
 
-    /** Color-only photo: original up to 12.5 MP; larger photos are treated as 12.5 MP (ratio kept). */
+    /** Automatic color-only photo: native pixels up to 50 MP; larger sources keep their ratio. */
     private fun decodeOriginal(uri: Uri, cancel: Cancel): Pair<Planes,Boolean> {
         val (sw,sh)=bounds(uri);val exif=orientation(uri)
         val ow=if(exif in 5..8)sh else sw;val oh=if(exif in 5..8)sw else sh
@@ -398,6 +398,7 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
     /** Fast-version pipeline; only bokeh output size and UI progress are extended. */
     fun process(uri: Uri, style: LeicaStyle, cancel: Cancel, blurEnabled: Boolean = false, point: LegendaryMath.Point? = null, aperture: Float = 2.8f, outputSize:BokehOutput=BokehOutput.SIZE_2048, colorEnabled:Boolean=true, renderSize:Pair<Int,Int>?=null, onVisual:((DevelopEvent)->Unit)?=null, subjectEnabled:Boolean=false, subjectPoints:List<LegendaryMath.Point> = emptyList(), progress: (String) -> Unit): Result {
         val processingMode=ProcessingMode.from(colorEnabled,blurEnabled)
+        val outputLabel=if(blurEnabled)outputSize.label else "原图像素（最高5000万）"
         require(!blurEnabled || point != null) { "请先在原照片上点击焦点" }
         FullFrameOptics.checkAperture(aperture)
         val timing=StageTiming{SystemClock.elapsedRealtime()}
@@ -408,11 +409,12 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
             // The original/GAN byte planes belong only to this helper stack; release them before ARNet.
             data class Prepared(val colored: Planes,val depth: LegendaryMath.Frame?,val focus: Float?,val inferMs: Long,val downscaled: Boolean,val subject:LegendaryMath.Frame?)
             fun prepare(): Prepared {
-                stage("1/7 读取 · ${outputSize.label} · 中央处理器")
+                stage("1/7 读取 · $outputLabel · 中央处理器")
                 cancel.check();val (sw,sh)=bounds(uri);val exif=orientation(uri)
                 val sourceWidth=if(exif in 5..8)sh else sw;val sourceHeight=if(exif in 5..8)sw else sh
-                val (w,h)=renderSize?:LeicaSizes.processingSize(sourceWidth,sourceHeight,blurEnabled,outputSize)
-                require(w in 1..sourceWidth && h in 1..sourceHeight){"输出尺寸超过来源像素"}
+                val requested=renderSize?:LeicaSizes.processingSize(sourceWidth,sourceHeight,blurEnabled,outputSize)
+                require(requested.first in 1..sourceWidth && requested.second in 1..sourceHeight){"输出尺寸超过来源像素"}
+                val (w,h)=if(blurEnabled)requested else LeicaSizes.colorSize(requested.first,requested.second)
                 val depthMap=if(blurEnabled){
                     analyzedDepth(uri,sourceWidth,sourceHeight,cancel){stage("2/7 $it")}
                 }else null
@@ -488,7 +490,7 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
                 for(y in 0 until h){cancel.check();for(x in 0 until w){val i=y*w+x;val at=x*3;row[at]=output.p0[i];row[at+1]=output.p1[i];row[at+2]=output.p2[i]};png.row(row)}
             }
             cancel.check()
-            val reason=if(!blurEnabled)"仅调色 · ${w}×$h · ${outputSize.label}" else if(!rendered)(if(colorEnabled)"焦点深度不可靠；已上色但未虚化，请在目标内部重新点选。" else "焦点深度不可靠；未调色且未虚化，请在目标内部重新点选。") else "${processingMode.label} · ${outputSize.label} · 光圈 $aperture · ${if(prepared.subject!=null)"主体保护 · 背景虚化" else "整图虚化"}"
+            val reason=if(!blurEnabled)"仅调色 · ${w}×$h · $outputLabel" else if(!rendered)(if(colorEnabled)"焦点深度不可靠；已上色但未虚化，请在目标内部重新点选。" else "焦点深度不可靠；未调色且未虚化，请在目标内部重新点选。") else "${processingMode.label} · ${outputSize.label} · 光圈 $aperture · ${if(prepared.subject!=null)"主体保护 · 背景虚化" else "整图虚化"}"
             val origPreview=loadPreview(uri);val resultPreview=loadPreview(Uri.fromFile(resultFile))
             timing.finish()
             return Result(style,resultFile,w,h,origPreview,resultPreview,inferMs,SystemClock.elapsedRealtime()-t0,prepared.downscaled,colorEnabled,rendered,reason,hardwareReport.summary(),timing.summary(),prepared.subject!=null && rendered)

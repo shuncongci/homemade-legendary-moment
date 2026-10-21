@@ -44,9 +44,9 @@ class BaselineOutputTest {
             assertEquals(1024 to 1024,LeicaSizes.modelSize(6000,6000,true,output))
         }
     }
-    @Test fun colorOnlyRespectsSelectedOutputAndLong1024Analysis(){
+    @Test fun colorOnlyIgnoresBokehOutputAndKeepsLong1024Analysis(){
         for(output in BokehOutput.entries){
-            assertEquals(when(output){BokehOutput.ORIGINAL->6000 to 4000;BokehOutput.SIZE_2048->2048 to 1365;BokehOutput.SIZE_1024->1024 to 683},LeicaSizes.processingSize(6000,4000,false,output))
+            assertEquals(6000 to 4000,LeicaSizes.processingSize(6000,4000,false,output))
             assertEquals(1024 to 683,LeicaSizes.modelSize(6000,4000,false,output))
             assertEquals(768 to 1024,LeicaSizes.modelSize(360,480,false,output))
         }
@@ -80,18 +80,19 @@ class BaselineOutputTest {
         assertTrue(input.p1.all{it.toInt()==120})
         assertTrue(input.p2.all{it.toInt()==100})
         assertEquals(768 to 1024,LeicaSizes.modelSize(3001,4001))
-        assertEquals(2048 to 1536,LeicaSizes.processingSize(4001,3001,false))
+        assertEquals(4001 to 3001,LeicaSizes.processingSize(4001,3001,false))
     }
-    @Test fun legacyColorBudgetHelperRemainsButOutputIsExplicit(){
-        assertEquals(2048 to 1536,LeicaSizes.processingSize(4000,3000,false))
+    @Test fun automaticColorBudgetIs50MpAndBokehRemainsExplicit(){
+        assertEquals(4000 to 3000,LeicaSizes.processingSize(4000,3000,false))
         assertEquals(5000 to 2500,LeicaSizes.colorSize(5000,2500))
-        assertEquals(4082 to 3061,LeicaSizes.colorSize(16384,12288))
-        assertEquals(4,LeicaSizes.colorSample(16384,12288))
+        assertEquals(8164 to 6123,LeicaSizes.colorSize(16384,12288))
+        assertEquals(2,LeicaSizes.colorSample(16384,12288))
         assertEquals(1,LeicaSizes.colorSample(4000,3000))
         for((w,h) in listOf(16384 to 12288,12288 to 16384,6000 to 4000,9000 to 3000,20000 to 10000,100000 to 200)){
             val (cw,ch)=LeicaSizes.colorSize(w,h)
             assertTrue(cw.toLong()*ch<=LeicaSizes.COLOR_MAX_PIXELS)
-            assertTrue(cw.toLong()*ch>=LeicaSizes.COLOR_MAX_PIXELS*99/100)
+            val expectedPixels=minOf(w.toLong()*h,LeicaSizes.COLOR_MAX_PIXELS)
+            assertTrue(cw.toLong()*ch>=expectedPixels*99/100)
             assertTrue(kotlin.math.abs(cw.toDouble()/ch-w.toDouble()/h)/(w.toDouble()/h)<=0.01)
             val s=LeicaSizes.colorSample(w,h)
             assertTrue(w/s>=cw && h/s>=ch)

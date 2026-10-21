@@ -100,7 +100,7 @@ internal fun parallelFor(n: Int, body: (Int) -> Unit) {
     IntStream.range(0, n).parallel().forEach { body(it) }
 }
 
-/** User-selected final output, shared by color, bokeh and composition. */
+/** User-selected final output for workflows that include bokeh. */
 enum class BokehOutput(val label:String,val longEdge:Int?) {
     ORIGINAL("原图像素",null), SIZE_2048("2048出图",2048), SIZE_1024("1024出图",1024)
 }
@@ -108,18 +108,21 @@ object LeicaSizes {
     const val MODEL_LONG_EDGE = 1024
     const val WORK_MAX_SIDE = 2048
     const val PREVIEW_MAX_SIDE = 1280
-    /** Color-only: photos above 12.5 MP (e.g. 200 MP) are processed as 12.5 MP, ratio kept. */
-    const val COLOR_MAX_PIXELS = 12_500_000L
+    /** Automatic non-bokeh output: source pixels up to 50 MP, aspect kept, never enlarged. */
+    const val COLOR_MAX_PIXELS = 50_000_000L
     fun colorSize(width: Int,height: Int): Pair<Int,Int> {
         require(width>0 && height>0)
         val px=width.toLong()*height
         if(px<=COLOR_MAX_PIXELS)return width to height
         val s=kotlin.math.sqrt(COLOR_MAX_PIXELS.toDouble()/px)
         var w=max(1,(width*s).toInt());var h=max(1,(height*s).toInt())
-        while(w.toLong()*h>COLOR_MAX_PIXELS){if(w>=h)w-- else h--}
+        // A one-pixel short edge cannot follow the ideal scale; bound the other axis directly.
+        if(w.toLong()*h>COLOR_MAX_PIXELS){
+            if(w>=h)w=max(1,(COLOR_MAX_PIXELS/h).toInt()) else h=max(1,(COLOR_MAX_PIXELS/w).toInt())
+        }
         return w to h
     }
-    /** Largest power-of-two decode sample that still covers the 12.5 MP target. */
+    /** Largest power-of-two decode sample that still covers the automatic 50 MP target. */
     fun colorSample(width: Int,height: Int): Int {
         val (tw,th)=colorSize(width,height);var sample=1
         while(width/(sample*2)>=tw && height/(sample*2)>=th)sample*=2
@@ -135,7 +138,7 @@ object LeicaSizes {
     }
     fun processingSize(width: Int,height: Int,blurEnabled: Boolean,output:BokehOutput=BokehOutput.SIZE_2048): Pair<Int,Int> {
         require(width>0 && height>0)
-        return workingSize(width,height,output)
+        return if(blurEnabled)workingSize(width,height,output) else colorSize(width,height)
     }
     /** GAN input and raw output have long edge 1024, ratio kept; bokeh/output options never change analysis size. */
     fun modelSize(width: Int,height: Int,blurEnabled: Boolean = false,output:BokehOutput=BokehOutput.SIZE_2048): Pair<Int,Int> {

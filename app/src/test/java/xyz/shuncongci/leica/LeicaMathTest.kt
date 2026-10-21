@@ -199,9 +199,9 @@ class LeicaMathTest {
         assertEquals(1,calls);assertEquals(1536,result.width);assertEquals(2048,result.height)
     }
 
-    @Test fun colorAndBokehShareSelectedOutputDimensions() {
+    @Test fun onlyBokehUsesSelectedOutputDimensions() {
         for((w,h) in listOf(4000 to 3000,3000 to 4000,5000 to 3000,360 to 480,1 to 100000)) {
-            assertEquals(LeicaSizes.workingSize(w,h),LeicaSizes.processingSize(w,h,false))
+            assertEquals(LeicaSizes.colorSize(w,h),LeicaSizes.processingSize(w,h,false))
             assertEquals(LeicaSizes.workingSize(w,h),LeicaSizes.processingSize(w,h,true))
         }
         assertEquals(1024 to 768,LeicaSizes.modelSize(4000,3000,false))

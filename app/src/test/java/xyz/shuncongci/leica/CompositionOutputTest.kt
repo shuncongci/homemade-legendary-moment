@@ -35,7 +35,13 @@ class CompositionOutputTest {
     @Test fun hugeNativeKeepsFullSourceBudget(){val p=plan(16384,12288,BokehOutput.ORIGINAL);assertEquals(16384,p.workWidth);assertEquals(12288,p.workHeight)}
     @Test fun focusSnapshotIsImmutable(){val focus=LegendaryMath.Point(.4f,.7f);val a=CompositionAppearance(true,true,focus,2.8f);assertSame(focus,a.focus);assertEquals(2.8f,a.aperture,0f)}
     @Test fun rejectsBlurWithoutFocus(){reject{CompositionAppearance(false,true,null,2.8f)}}
-    @Test fun allModesHonorRequestedOutput(){for(blur in listOf(false,true)){assertEquals(1024 to 768,LeicaSizes.processingSize(4000,3000,blur,BokehOutput.SIZE_1024));assertEquals(2048 to 1536,LeicaSizes.processingSize(4000,3000,blur,BokehOutput.SIZE_2048));assertEquals(4000 to 3000,LeicaSizes.processingSize(4000,3000,blur,BokehOutput.ORIGINAL));assertEquals(360 to 480,LeicaSizes.processingSize(360,480,blur))}}
+    @Test fun onlyBlurHonorsRequestedOutput(){
+        assertEquals(1024 to 768,LeicaSizes.processingSize(4000,3000,true,BokehOutput.SIZE_1024))
+        assertEquals(2048 to 1536,LeicaSizes.processingSize(4000,3000,true,BokehOutput.SIZE_2048))
+        assertEquals(4000 to 3000,LeicaSizes.processingSize(4000,3000,true,BokehOutput.ORIGINAL))
+        for(o in BokehOutput.entries)assertEquals(4000 to 3000,LeicaSizes.processingSize(4000,3000,false,o))
+        for(blur in listOf(false,true))for(o in BokehOutput.entries)assertEquals(360 to 480,LeicaSizes.processingSize(360,480,blur,o))
+    }
     @Test fun automaticOptionsAreFewAndExportable(){val f=CompositionAnalysis.extract(Planes.fromArgb(IntArray(320*240){i->if(i%320 in 35..120 && i/320 in 75..175)0xffe95522.toInt()else 0xff556677.toInt()},320,240))
         for(o in BokehOutput.entries){val s=CompositionAnalysis.automatic(f,4000,3000,o);assertTrue(s.size in 1..4);assertEquals(CompositionGeometry.FULL,s[0].crop)
             for((i,v)in s.withIndex()){assertTrue(CompositionOutput.eligible(4000,3000,v.crop,o));for(other in s.take(i))assertTrue(CompositionGeometry.iou(v.crop,other.crop)<=.88)}
