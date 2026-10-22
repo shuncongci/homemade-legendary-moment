@@ -21,6 +21,14 @@ class PhotoFlow {
     fun showParameters(value:Boolean){parametersExpanded=value}
     var blur = false; private set
     var colorEnabled = true; private set
+    var style = LeicaStyle.DEFAULT; private set
+    /** A style edit changes future rendering only; existing pixels and geometry caches remain intact. */
+    fun selectStyle(value:LeicaStyle) {
+        check(!busy)
+        if(style==value)return
+        style=value
+        if(colorEnabled)parametersChanged()
+    }
     val processingMode get() = ProcessingMode.from(colorEnabled,blur)
     fun selectProcessingMode(mode:ProcessingMode) {
         check(!busy)

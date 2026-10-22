@@ -4,7 +4,7 @@ import argparse, hashlib, json, sys
 ROOT = Path(__file__).resolve().parents[1]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--bundled-only', action='store_true', help='check only the included author model')
+    parser.add_argument('--bundled-only', action='store_true', help='check only the included author models')
     args = parser.parse_args()
     errors = 0
     for entry in json.loads((ROOT / 'models.json').read_text(encoding='utf8'))['models']:

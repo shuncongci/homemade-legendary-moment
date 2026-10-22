@@ -25,11 +25,6 @@ import java.util.Locale
 import kotlin.math.max
 import kotlin.math.min
 
-/** M9 series 3.0 epoch11; original FP16 pipeline precision and FP32 external I/O. */
-enum class LeicaStyle(val label: String, val short: String, val asset: String, val sha256: String) {
-    LEGENDARY("徕卡M9系列3.0", "传奇", "leica/leica-m9-v3-epoch11.fp16.onnx", "8936b8c86656265ab07c30b9b4cbbd7fa195d6e44cb3be1d4fd059bb36781e33"),
-}
-
 /** Original depth (optional) -> GAN LAB detail fusion (all sizes) -> manual ARNet/aperture bokeh. */
 class LeicaEngine(private val context: Context, private val diagnostic: ((String,LegendaryMath.Frame)->Unit)? = null,
     private val depthBusy:(Boolean)->Unit = {}, private val depthReady:(DepthVisualMath.Data)->Unit = {},
@@ -308,7 +303,9 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
                     for (c in 0 until 3) {
                         val dst = o.plane(c)
                         for (i in 0 until hw) {
-                            val x = (fb.get(c * hw + i) * 0.5f + 0.5f).coerceIn(0f, 1f)
+                            val value = fb.get(c * hw + i)
+                            check(value.isFinite()) { "调色模型输出包含非有限值" }
+                            val x = (value * 0.5f + 0.5f).coerceIn(0f, 1f)
                             dst[i] = (x * 255f).toInt().toByte()
                         }
                     }
@@ -425,7 +422,7 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
                 return processingMode.selectColorPath(color={
                     val (mw,mh)=LeicaSizes.modelSize(sourceWidth,sourceHeight)
                     onVisual?.invoke(DevelopEvent.ColorStart(blurEnabled))
-                    stage("3/7 上色 · ${mw}×$mh · 执行中")
+                    stage("3/7 上色 · ${style.label} · ${mw}×$mh · 执行中")
                     val (gan,inferMs)=analyzeColor(uri,style,cancel)
                     stage("4/7 融合 · ${w}×$h · 中央处理器")
                     // Pure color loads full source only after GAN input/tensors/session are released.
@@ -490,7 +487,7 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
                 for(y in 0 until h){cancel.check();for(x in 0 until w){val i=y*w+x;val at=x*3;row[at]=output.p0[i];row[at+1]=output.p1[i];row[at+2]=output.p2[i]};png.row(row)}
             }
             cancel.check()
-            val reason=if(!blurEnabled)"仅调色 · ${w}×$h · $outputLabel" else if(!rendered)(if(colorEnabled)"焦点深度不可靠；已上色但未虚化，请在目标内部重新点选。" else "焦点深度不可靠；未调色且未虚化，请在目标内部重新点选。") else "${processingMode.label} · ${outputSize.label} · 光圈 $aperture · ${if(prepared.subject!=null)"主体保护 · 背景虚化" else "整图虚化"}"
+            val reason=(if(colorEnabled)"${style.label} · " else "") + if(!blurEnabled)"仅调色 · ${w}×$h · $outputLabel" else if(!rendered)(if(colorEnabled)"焦点深度不可靠；已上色但未虚化，请在目标内部重新点选。" else "焦点深度不可靠；未调色且未虚化，请在目标内部重新点选。") else "${processingMode.label} · ${outputSize.label} · 光圈 $aperture · ${if(prepared.subject!=null)"主体保护 · 背景虚化" else "整图虚化"}"
             val origPreview=loadPreview(uri);val resultPreview=loadPreview(Uri.fromFile(resultFile))
             timing.finish()
             return Result(style,resultFile,w,h,origPreview,resultPreview,inferMs,SystemClock.elapsedRealtime()-t0,prepared.downscaled,colorEnabled,rendered,reason,hardwareReport.summary(),timing.summary(),prepared.subject!=null && rendered)

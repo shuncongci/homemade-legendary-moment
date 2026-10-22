@@ -1,0 +1,31 @@
+{
+  "version": "2.1.24",
+  "models": [
+    {
+      "id": "cool",
+      "label": "徕卡冷调",
+      "sourceSeries": "徕卡M9，M10系列4.0",
+      "epoch": 6,
+      "direction": "G_AB",
+      "checkpointSha256": "40658bc01a360ca1d1169e8c17756d860d663e83913169a102d9c25c5bddfb65",
+      "asset": "leica/leica-cool-epoch6.fp16.onnx",
+      "sha256": "f85e59126d86b5184c053b51048e36048ced56580b2c1a2c695f742cfa450d29",
+      "bytes": 10053669
+    },
+    {
+      "id": "warm",
+      "label": "徕卡暖调",
+      "sourceSeries": "徕卡M9系列3.0",
+      "epoch": 6,
+      "direction": "G_AB",
+      "checkpointSha256": "ceb3832bcdb1f2f97a89535dc78723482294e0ba73d982c5241e348a77e47bbf",
+      "asset": "leica/leica-warm-epoch6.fp16.onnx",
+      "sha256": "b371371aa34c6b9af8ca0aa90cfa8159a04f4997a170792fab63eeb9523dbcab",
+      "bytes": 10053669
+    }
+  ],
+  "precision": "FP16 internally; FP32 IO",
+  "input": "NCHW RGB [-1,1], long edge 1024",
+  "postprocess": "Existing integer Lab fusion; no LUT, shading or colorfix",
+  "androidVerified": false
+}

@@ -28,6 +28,6 @@ object CompositionOutput {
 }
 
 /** Immutable appearance settings of the displayed result; later slider edits cannot change its export. */
-data class CompositionAppearance(val color:Boolean,val blur:Boolean,val focus:LegendaryMath.Point?,val aperture:Float) {
+data class CompositionAppearance(val color:Boolean,val blur:Boolean,val focus:LegendaryMath.Point?,val aperture:Float,val style:LeicaStyle=LeicaStyle.DEFAULT) {
     init {require(!blur || focus!=null);FullFrameOptics.checkAperture(aperture)}
 }

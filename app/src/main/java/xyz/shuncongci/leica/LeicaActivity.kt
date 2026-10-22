@@ -66,6 +66,7 @@ class LeicaActivity:AppCompatActivity() {
     private lateinit var status:TextView;private lateinit var elapsedLabel:TextView;private lateinit var progress:ProgressBar;private lateinit var progressLabel:TextView
     private lateinit var depthControls:LinearLayout;private lateinit var apertureDial:ApertureDial
     private lateinit var processingButton:StudioButton;private lateinit var outputButton:StudioButton;private lateinit var focusButton:StudioButton;private lateinit var regionButton:StudioButton
+    private lateinit var colorControls:LinearLayout;private lateinit var styleButtons:List<StudioButton>;private lateinit var styleHint:TextView
     private lateinit var parametersButton:StudioButton
     private lateinit var subjectButton:StudioButton
     private lateinit var subjectSelectButton:StudioButton;private lateinit var subjectComputeButton:StudioButton
@@ -122,6 +123,7 @@ class LeicaActivity:AppCompatActivity() {
             }})
         engine.clearCache()
         outputSize=BokehOutput.entries.getOrElse(getPreferences(MODE_PRIVATE).getInt("bokeh-output",BokehOutput.SIZE_2048.ordinal)){BokehOutput.SIZE_2048}
+        flow.selectStyle(LeicaStyle.fromId(getPreferences(MODE_PRIVATE).getString("color-style",null)))
         root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setBackgroundColor(0xff151617.toInt())}
         val header=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(0,0,0,dp(10))}
         header.addView(LinearLayout(this).apply{
@@ -164,6 +166,20 @@ class LeicaActivity:AppCompatActivity() {
         workflowPanel.block(row(processingButton,outputButton))
         compositionButton=button("智能构图").apply{setOnClickListener{openComposition()}}
         workflowPanel.block(compositionButton);controls.addView(workflowPanel)
+        colorControls=section("调色风格")
+        styleButtons=LeicaStyle.entries.map{style->button(style.label).apply{
+            setOnClickListener{
+                if(!flow.busy && !composing && workflow.allowsColorSelection && flow.style!=style){
+                    flow.selectStyle(style)
+                    getPreferences(MODE_PRIVATE).edit().putString("color-style",style.id).apply()
+                    status.text=if(flow.hasResult)"已选择${style.label} · 点击「重新显影」应用；上次成片保留，保存不会偷偷重跑。" else "已选择${style.label} · 点击显影后应用。"
+                    refresh()
+                }
+            }
+        }}
+        colorControls.block(row(*styleButtons.toTypedArray()))
+        styleHint=label("选择风格后点击显影；不会自动处理或保存。",11f)
+        colorControls.block(styleHint,6);controls.addView(colorControls)
         depthControls=section("景深")
         apertureDial=ApertureDial(this);depthControls.addView(apertureDial,LinearLayout.LayoutParams(MATCH_PARENT,dp(102)))
         val strip=LinearLayout(this)
@@ -266,12 +282,18 @@ class LeicaActivity:AppCompatActivity() {
             viewer==Viewer.RELIEF->if(flow.subjectReady && flow.blur)"主体保护 · 主体与焦平面对齐 · 拖动旋转，双击复位" else "空间 · 相对深度 · 拖动旋转，双击复位"
             viewer in listOf(Viewer.RESULT,Viewer.COMPARE)->"${viewer.label} · ${currentCropPlan().label()} · ${if(flow.saved)"已保存" else "未保存"}"
             else->"${viewer.label} · 光圈 ${flow.aperture}"
-        } + if(flow.blur && flow.subjectEnabled && flow.subjectReady && viewer==Viewer.ORIGINAL)" · 主体保护" else ""
+        } + (if(viewer in listOf(Viewer.RESULT,Viewer.COMPARE) && resultAppearance?.color==true)" · ${resultAppearance?.style?.label}" else "") + if(flow.blur && flow.subjectEnabled && flow.subjectReady && viewer==Viewer.ORIGINAL)" · 主体保护" else ""
     }
     private fun refresh(){
         pickButton.isEnabled=!flow.busy;runButton.isEnabled=workflow.canStart(flow);saveButton.isEnabled=flow.canSave
         compositionButton.isEnabled=!flow.busy && flow.hasPhoto
         processingButton.isEnabled=!flow.busy;processingButton.text=workflow.label
+        colorControls.visibility=if(workflow.allowsColorSelection && !composing)View.VISIBLE else View.GONE
+        styleButtons.forEachIndexed{i,b->
+            val style=LeicaStyle.entries[i];b.isSelected=flow.style==style;b.isEnabled=!flow.busy && !composing
+            b.contentDescription="${style.label} · ${if(b.isSelected)"已选择" else "未选择"} · 选择后点击显影应用"
+        }
+        styleHint.text=if(flow.resultStale && flow.hasResult)"当前选择：${flow.style.label} · 参数待重新显影；保存仅用上次成片。" else "当前选择：${flow.style.label} · 两种独立模型，保留原图细节；切换不会自动显影。"
         compositionButton.visibility=if(workflow.onlyComposition)View.GONE else View.VISIBLE
         compositionButton.text="智能构图"
         outputButton.visibility=if(workflow.allowsOutputSelection)View.VISIBLE else View.GONE
@@ -471,7 +493,7 @@ class LeicaActivity:AppCompatActivity() {
     private fun generate(){
         val uri=photo ?: return;if(!workflow.canStart(flow))return
         if(workflow.onlyComposition || (workflow.composeAfter && current!=null && !flow.resultStale)){openComposition();return}
-        val selectedWorkflow=workflow
+        val selectedWorkflow=workflow;val selectedStyle=flow.style
         val blur=flow.blur;val subject=flow.subjectEnabled;val selectedPoints=flow.subjectPoints.toList();val color=flow.colorEnabled;val point=flow.focus;val ap=flow.aperture;val size=selectedWorkflow.output(outputSize)
         previewUpdates.discard()
         operation(PhotoFlow.Operation.GENERATE,"准备${flow.processingMode.label}",afterSuccess={
@@ -484,7 +506,7 @@ class LeicaActivity:AppCompatActivity() {
             compare.original?.let{developView.beginSource(it)}
             val unpublished=DevelopTransfer<LeicaEngine.Result>{r->r.original.recycle();r.result.recycle();r.file.delete()}
             try {
-            val result=withContext(dispatcher){engine.process(uri,LeicaStyle.LEGENDARY,c,blur,point,ap,size,color,subjectEnabled=subject,subjectPoints=selectedPoints,renderSize=if(crop==CompositionGeometry.FULL)null else EditorCrop.renderPlan(sourceWidth,sourceHeight,crop,size,blur).let{it.workWidth to it.workHeight},onVisual={event->
+            val result=withContext(dispatcher){engine.process(uri,selectedStyle,c,blur,point,ap,size,color,subjectEnabled=subject,subjectPoints=selectedPoints,renderSize=if(crop==CompositionGeometry.FULL)null else EditorCrop.renderPlan(sourceWidth,sourceHeight,crop,size,blur).let{it.workWidth to it.workHeight},onVisual={event->
                 runOnUiThread{
                     if(isDestroyed || isFinishing || cancel!==c || c.cancelled){event.dispose();return@runOnUiThread}
                     stageView.hide();compare.visibility=View.INVISIBLE;developView.accept(event)
@@ -504,7 +526,7 @@ class LeicaActivity:AppCompatActivity() {
                 c.check();currentCoroutineContext().ensureActive()
             }catch(e:Exception){unpublished.close();throw e}
             check(unpublished.take()===result)
-            current=result;resultAppearance=CompositionAppearance(color,result.rendered,point,ap);flow.generated();if(result.subjectProtected)flow.subjectCompleted()
+            current=result;resultAppearance=CompositionAppearance(color,result.rendered,point,ap,result.style);flow.generated();if(result.subjectProtected)flow.subjectCompleted()
             stageView.setPhoto(result.original);compare.setSources(uri,Uri.fromFile(result.file));compare.original=result.original;compare.result=result.result;viewer=Viewer.RESULT
             withContext(dispatcher){engine.clearCache(result.file)}
             status.text="${currentCropPlan().label()} · ${result.reason}\n${result.hardwareSummary}\n${result.stageSummary}"

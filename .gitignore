@@ -22,4 +22,5 @@ third_party/
 weights/
 exported/
 app/src/main/assets/leica/*.onnx
-!app/src/main/assets/leica/leica-m9-v3-epoch11.fp16.onnx
+!app/src/main/assets/leica/leica-cool-epoch6.fp16.onnx
+!app/src/main/assets/leica/leica-warm-epoch6.fp16.onnx

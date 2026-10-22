@@ -2,14 +2,29 @@
   "schemaVersion": 1,
   "models": [
     {
-      "name": "M9 series 3.0 epoch11",
-      "path": "app/src/main/assets/leica/leica-m9-v3-epoch11.fp16.onnx",
+      "name": "徕卡冷调 (M9/M10 series 4.0 epoch6)",
+      "id": "cool",
+      "path": "app/src/main/assets/leica/leica-cool-epoch6.fp16.onnx",
       "bundled": true,
       "origin": "author",
       "repository": null,
-      "sourceCheckpointSha256": "8456c139e98ce98ac8742a5d20bc1a65a0315f85f13ad37c02cb708af1c337c6",
-      "sha256": "8936b8c86656265ab07c30b9b4cbbd7fa195d6e44cb3be1d4fd059bb36781e33",
+      "sourceCheckpointSha256": "40658bc01a360ca1d1169e8c17756d860d663e83913169a102d9c25c5bddfb65",
+      "sha256": "f85e59126d86b5184c053b51048e36048ced56580b2c1a2c695f742cfa450d29",
       "bytes": 10053669,
+      "direction": "G_AB",
+      "license": "Personal non-commercial use; see LICENSE"
+    },
+    {
+      "name": "徕卡暖调 (M9 series 3.0 epoch6)",
+      "id": "warm",
+      "path": "app/src/main/assets/leica/leica-warm-epoch6.fp16.onnx",
+      "bundled": true,
+      "origin": "author",
+      "repository": null,
+      "sourceCheckpointSha256": "ceb3832bcdb1f2f97a89535dc78723482294e0ba73d982c5241e348a77e47bbf",
+      "sha256": "b371371aa34c6b9af8ca0aa90cfa8159a04f4997a170792fab63eeb9523dbcab",
+      "bytes": 10053669,
+      "direction": "G_AB",
       "license": "Personal non-commercial use; see LICENSE"
     },
     {

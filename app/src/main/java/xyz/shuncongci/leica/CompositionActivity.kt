@@ -41,7 +41,7 @@ class CompositionActivity:AppCompatActivity() {
         output=BokehOutput.entries.getOrElse(intent.getIntExtra("output",BokehOutput.SIZE_2048.ordinal)){BokehOutput.SIZE_2048}
         val fx=intent.getFloatExtra("focusX",-1f);val fy=intent.getFloatExtra("focusY",-1f)
         val focus=if(fx in 0f..1f && fy in 0f..1f)LegendaryMath.Point(fx,fy)else null
-        appearance=CompositionAppearance(intent.getBooleanExtra("color",false),intent.getBooleanExtra("blur",false),focus,intent.getFloatExtra("aperture",2.8f))
+        appearance=CompositionAppearance(intent.getBooleanExtra("color",false),intent.getBooleanExtra("blur",false),focus,intent.getFloatExtra("aperture",2.8f),LeicaStyle.fromId(intent.getStringExtra("colorStyle")))
         selected=state?.getInt("selected")?:0;state?.getIntArray("savedIndices")?.let{savedIndices.addAll(it.toList())}
         val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setBackgroundColor(0xff151617.toInt())}
         val header=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL}

@@ -8,11 +8,16 @@ App 直接读取 app/src/main/assets/leica/ 下的 ONNX 文件，不在运行时
 
 自有模型
 
-M9 系列 3.0，epoch11
+两种独立调色模式，均为 epoch6 的 G_AB 方向：
 
-工程文件：leica-m9-v3-epoch11.fp16.onnx。
+| 模式 | 来源系列 | 工程文件 |
+|---|---|---|
+| 徕卡冷调 | M9/M10系列4.0 | leica-cool-epoch6.fp16.onnx |
+| 徕卡暖调 | M9系列3.0 | leica-warm-epoch6.fp16.onnx |
 
-来源：我提供的 cloud_epoch11.pth，使用 G_AB 方向。我只随源码提供当前运行所需的 ONNX，不提供训练集和其他轮次。
+两份原 checkpoint 都叫 cloud_epoch6.pth，但权重不同，不可混用。只随源码提供当前运行所需的两份 ONNX，不提供原 checkpoint、训练集或其他轮次。旧 epoch11 ONNX 已从当前文件树移除，不改写历史提交。
+
+models.json 和 LeicaStyle.kt 保存两份模型的 SHA-256、来源 checkpoint 哈希及对应关系。不能只凭文件名替换或删除哈希检查。两份模型分别严格加载 G_AB，并通过32组桌面 PyTorch/ONNX FP32与FP16转换比较；另以当前Kotlin重采样/LAB融合完成8组桌面图片联调。转换一致性不是相机标定、审美评分或手机性能验收。
 
 许可：个人非商业使用许可协议（../LICENSE）。模型架构中如涉及第三方材料，仍以对应声明为准。
 
@@ -106,7 +111,7 @@ App 对大图只推理含未知边界的块并重叠融合，不是把整张 204
 
 转换、放置和核对
 
-models.json 记录本工程实际使用过的六份 ONNX 的字节数、SHA-256、原检查点哈希和来源。把自行获得或转换的 ONNX 按清单中的文件名放置后运行：
+models.json 记录本工程实际使用的七份 ONNX（两份自有调色＋五份第三方模型） 的字节数、SHA-256、原检查点哈希和来源。把自行获得或转换的 ONNX 按清单中的文件名放置后运行：
 
 ```bash
 python tools/check_models.py
@@ -120,7 +125,7 @@ SAM/ViTMatte 的转换入口见 tools/export_subject.py；其他三个模型的�
 
 导出工具链版本不同，即使输出数值相近，ONNX 的文件哈希也可能不同。本项目不提供一个可保证从任意上游版本重建相同字节的下载命令。若重新导出后哈希不同，先检查接口、数值和许可，再同步 models.json 和下列源码中的对应常量：
 
-LeicaEngine.kt：调色、深度、ARNet。
+LeicaStyle.kt：冷调、暖调；LeicaEngine.kt：深度、ARNet。
 
 GaicComposition.kt：GAIC。
 

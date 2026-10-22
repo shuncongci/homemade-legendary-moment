@@ -16,7 +16,7 @@ object CompositionRender {
             LeicaEngine(context,resultDirectory=directory).use{engine->
                 engineChanged(engine)
                 cancel.check()
-                rendered=engine.process(Uri.fromFile(original),LeicaStyle.LEGENDARY,cancel,appearance.blur,appearance.focus,
+                rendered=engine.process(Uri.fromFile(original),appearance.style,cancel,appearance.blur,appearance.focus,
                     appearance.aperture,output,appearance.color,plan.workWidth to plan.workHeight){progress(it)}
                 val result=checkNotNull(rendered)
                 check(!appearance.blur || result.rendered){"该焦点无法生成虚化，请返回重新选焦"}

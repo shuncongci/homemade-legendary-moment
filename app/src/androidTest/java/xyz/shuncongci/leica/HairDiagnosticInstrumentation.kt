@@ -37,7 +37,7 @@ class HairDiagnosticInstrumentation:Instrumentation(){
                 .put("x",x).put("y",y).put("aperture",aperture).put("note","Controlled test coordinates; prior UI only reported rounded percentages")
             File(dir,"request.json").writeText(meta.toString(2))
             LeicaEngine(ctx,::capture).use { engine ->
-                val result=engine.process(Uri.fromFile(source),LeicaStyle.LEGENDARY,Cancel(),true,LegendaryMath.Point(x,y),aperture,BokehOutput.SIZE_2048,true){message ->
+                val result=engine.process(Uri.fromFile(source),LeicaStyle.DEFAULT,Cancel(),true,LegendaryMath.Point(x,y),aperture,BokehOutput.SIZE_2048,true){message ->
                     File(dir,"progress.txt").writeText(message)
                     sendStatus(0,Bundle().apply{putString("stream",message+"\n")})
                 }

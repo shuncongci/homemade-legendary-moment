@@ -24,7 +24,7 @@ ViTMatte：作者 Jingfeng Yao、Xinggang Wang、Shusheng Yang、Baoyuan Wang。
 
 Apache-2.0 全文和原始 ViTMatte 模型卡保存在 app/src/main/assets/subject-licenses/。模型卡按上游原样保留，其中格式、插图链接和引用不是本项目新增宣传材料。各模型检查点与转换文件哈希见 models.json。
 
-M9 epoch11 由作者提供，当前 ONNX 随源码保留，按根目录个人非商业协议使用。这里没有公开训练集，也没有因此对训练素材、模型结构或第三方权利作全面担保。
+徕卡冷调（M9/M10系列4.0 epoch6）与徕卡暖调（M9系列3.0 epoch6）由作者提供，两份当前 ONNX 随源码提供，按根目录个人非商业协议使用。旧 epoch11 模型不再出现在当前文件树；不因此改写既有 Git 历史。这里没有公开训练集或原始 PyTorch 检查点，也没有因此对训练素材、模型结构或第三方权利作全面担保。
 
 Python 工具
 
