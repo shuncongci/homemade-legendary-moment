@@ -30,8 +30,8 @@ object SubjectProtectionMath {
     fun trimapRadius(w:Int,h:Int):Int{require(w>0 && h>0);return max(5,(5.0*max(w,h)/1220).roundToInt())}
     private val mean=floatArrayOf(.485f,.456f,.406f)
     private val std=floatArrayOf(.229f,.224f,.225f)
-    fun analysisSize(w:Int,h:Int):Pair<Int,Int>{
-        require(w>0 && h>0);val scale=min(1.0,ANALYSIS_LONG_EDGE.toDouble()/max(w,h))
+    fun analysisSize(w:Int,h:Int,longEdge:Int=ANALYSIS_LONG_EDGE):Pair<Int,Int>{
+        require(w>0 && h>0 && longEdge in SubjectResolution.entries.map{it.longEdge});val scale=min(1.0,longEdge.toDouble()/max(w,h))
         return max(1,round(w*scale).toInt()) to max(1,round(h*scale).toInt())
     }
     /** Torch tensor bilinear antialias (float separable, no intermediate 8-bit rounding). */
@@ -101,7 +101,7 @@ object SubjectProtectionMath {
             for(c in 0..2){val s=sharp.plane(c)[i].toInt() and 255;val b=blurred.plane(c)[i].toInt() and 255
                 out.plane(c)[i]=Math.rint((s*t+b*(1-t)).toDouble()).toInt().toByte()
             }
-        }};return GradientSubjectEdges.refine(sharp,blurred,a,NaturalSubjectEdges.refine(sharp,blurred,a,out,cancel),cancel)
+        }};return WideSubjectEdges.refine(source,blurred,a,GradientSubjectEdges.refine(sharp,blurred,a,NaturalSubjectEdges.refine(sharp,blurred,a,out,cancel),cancel),cancel)
     }
     fun overlay(alpha:LegendaryMath.Frame,w:Int,h:Int,cancel:Cancel):IntArray {
         val a=LegendaryMath.resize(alpha,w,h,cancel=cancel)

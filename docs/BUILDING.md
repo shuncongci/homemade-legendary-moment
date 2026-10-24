@@ -25,6 +25,8 @@ Android Gradle Plugin 8.7.3、Kotlin 2.0.21、Gradle 8.9，版本在工程中固
 
 macOS/Linux 用 ./gradlew（首次执行 chmod +x gradlew）。标准测试入口 :app:testDebugUnitTest 也保留；verifyLeicaMath 直接用 JUnitCore 运行同一套断言，适合 Gradle 测试进程遇到路径问题的环境。
 
+本次 2.5.0 公开树已通过 1240 项 JVM 测试，并构建 Debug、未签名 Release 与 AndroidTest APK；设备测试尚未运行。需要只编译设备诊断包时可执行 `:app:assembleDebugAndroidTest`，不要把生成测试 APK 当作测试已经执行。
+
 默认输出为 app/build/outputs/apk/debug/app-debug.apk。Debug 使用你电脑上的 Android 调试密钥签名，不使用我的发布签名。如果与已安装版本的签名不同，不能直接覆盖安装。卸载可能丢失应用数据，处理签名冲突前请先确认备份和数据保留方式。
 
 缺少第三方模型不会阻止编译，但调用相应功能会失败。模型准备步骤见 MODELS.md。不要把“编译成功”当作“完整推理已可用”。

@@ -2,6 +2,7 @@ package xyz.shuncongci.leica
 
 import android.animation.ValueAnimator
 import android.os.Bundle
+import android.net.Uri
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
@@ -22,15 +23,16 @@ class CompositionActivity:AppCompatActivity() {
     private var loadingPreview:android.graphics.Bitmap?=null
     private var token:Cancel?=null
     @Volatile private var engine:LeicaEngine?=null
-    private var busy=false;private var selected=0
+    private var busy=false;private var selected=0;private var prepared:LeicaEngine.Result?=null
     private val savedIndices=mutableSetOf<Int>()
-    private var sourceW=1;private var sourceH=1
+    private var sourceW=1;private var sourceH=1;private var sourceHdr=false
     private var items=emptyList<CompositionAnalysis.Suggestion>()
     private lateinit var sourcePath:String;private lateinit var originalPath:String
     private lateinit var output:BokehOutput;private lateinit var appearance:CompositionAppearance
     private lateinit var preview:CompositionCropView;private lateinit var status:TextView;private lateinit var dimensions:TextView
     private lateinit var proposals:LinearLayout;private lateinit var apply:StudioButton;private lateinit var cancel:StudioButton
     private lateinit var retry:StudioButton;private lateinit var bar:ProgressBar
+    private var exportMenu:ExportUi.Handle?=null;private var exportFormat=ExportFormat.DEFAULT
     private val cards=mutableListOf<View>()
     private fun dp(n:Int)=(n*resources.displayMetrics.density).toInt()
     private fun text(value:String,size:Float=14f)=TextView(this).apply{text=value;textSize=size;setTextColor(0xffddd5c8.toInt());setLineSpacing(dp(3).toFloat(),1f)}
@@ -42,7 +44,9 @@ class CompositionActivity:AppCompatActivity() {
         val fx=intent.getFloatExtra("focusX",-1f);val fy=intent.getFloatExtra("focusY",-1f)
         val focus=if(fx in 0f..1f && fy in 0f..1f)LegendaryMath.Point(fx,fy)else null
         appearance=CompositionAppearance(intent.getBooleanExtra("color",false),intent.getBooleanExtra("blur",false),focus,intent.getFloatExtra("aperture",2.8f),LeicaStyle.fromId(intent.getStringExtra("colorStyle")))
-        selected=state?.getInt("selected")?:0;state?.getIntArray("savedIndices")?.let{savedIndices.addAll(it.toList())}
+        selected=state?.getInt("selected")?:0
+        exportFormat=ExportPreferences.load(this)
+        if(state?.getString("export-format")==exportFormat.id)state.getIntArray("savedIndices")?.let{savedIndices.addAll(it.toList())}
         val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setBackgroundColor(0xff151617.toInt())}
         val header=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL}
         header.addView(text("智能构图",21f),LinearLayout.LayoutParams(0,WRAP_CONTENT,1f))
@@ -54,7 +58,7 @@ class CompositionActivity:AppCompatActivity() {
         status=text("正在分析画面…",12f).apply{accessibilityLiveRegion=View.ACCESSIBILITY_LIVE_REGION_POLITE};panel.block(status)
         panel.block(text("选择方案 → 应用并另存\n分块时可拖动视角，不改变裁切\nGAIC 纯模型构图，不混入人工规则评分",11f))
         proposals=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};panel.block(proposals)
-        apply=StudioButton(this,true).apply{text="应用";setOnClickListener{applySelected()}};panel.block(apply)
+        apply=StudioButton(this,true).apply{text="导出";setOnClickListener{showExport()}};panel.block(apply)
         cancel=StudioButton(this).apply{text="取消";setOnClickListener{cancelTask()}};panel.block(cancel)
         retry=StudioButton(this).apply{text="重试";setOnClickListener{analyse()}};panel.block(retry)
         root.addView(EditorLayout(this,preview,ScrollView(this).apply{addView(panel)}),LinearLayout.LayoutParams(MATCH_PARENT,0,1f))
@@ -81,7 +85,7 @@ class CompositionActivity:AppCompatActivity() {
     }
     private fun analyse(){
         if(busy)return
-        data class Answer(val data:CompositionFiles.Loaded,val w:Int,val h:Int,val suggestions:List<CompositionAnalysis.Suggestion>)
+        data class Answer(val data:CompositionFiles.Loaded,val w:Int,val h:Int,val suggestions:List<CompositionAnalysis.Suggestion>,val hdr:Boolean,val rendered:LeicaEngine.Result?)
         preview.beginAnalysis()
         task("正在读取照片…",{c->
             val (w,h)=CompositionFiles.dimensions(applicationContext,CompositionFiles.source(applicationContext,originalPath))
@@ -95,10 +99,22 @@ class CompositionActivity:AppCompatActivity() {
                 }
             }
             try{
-                val suggestions=gaic.analyse(applicationContext,data.image,w,h,output,c);c.check();Answer(data,w,h,suggestions)
+                val suggestions=gaic.analyse(applicationContext,data.image,w,h,output,c);c.check()
+                val original=CompositionFiles.source(applicationContext,originalPath)
+                val hdr=HdrAutoSource.detect(applicationContext,Uri.fromFile(original))
+                val rendered=if(appearance.color || appearance.blur){
+                    val plans=suggestions.map{CompositionOutput.plan(w,h,it.crop,output)}
+                    LeicaEngine(applicationContext,resultDirectory=java.io.File(cacheDir,"composition-prepared")).use{e->
+                        engine=e
+                        try{e.process(Uri.fromFile(original),appearance.style,c,appearance.blur,appearance.focus,appearance.aperture,output,appearance.color,
+                            plans.maxOf{it.workWidth} to plans.maxOf{it.workHeight}){message->runOnUiThread{if(token===c && !isDestroyed)status.text=message}}}finally{engine=null}
+                    }
+                }else null
+                Answer(data,w,h,suggestions,rendered?.hdrReady?:hdr,rendered)
             }catch(e:Exception){data.bitmap.recycle();throw e}
-        },{it.data.bitmap.recycle()}){answer->
-            val previous=loaded;loaded=answer.data;sourceW=answer.w;sourceH=answer.h;items=answer.suggestions
+        },{it.data.bitmap.recycle();disposePrepared(it.rendered)}){answer->
+            disposePrepared(prepared);prepared=answer.rendered
+            sourceHdr=answer.hdr;val previous=loaded;loaded=answer.data;sourceW=answer.w;sourceH=answer.h;items=answer.suggestions
             selected=selected.coerceIn(0,items.lastIndex)
             preview.setPhoto(answer.data.bitmap,sourceW,sourceH)
             loadingPreview?.recycle();loadingPreview=null;previous?.bitmap?.recycle()
@@ -122,20 +138,37 @@ class CompositionActivity:AppCompatActivity() {
             }
         }
     }
-    private fun applySelected(){
-        if(busy || loaded==null || selected in savedIndices)return
-        val index=selected;val plan=CompositionOutput.plan(sourceW,sourceH,items[index].crop,output)
+    private fun showExport(){
+        if(busy || loaded==null || exportMenu?.isShowing==true)return
+        val plan=CompositionOutput.plan(sourceW,sourceH,items[selected].crop,output)
+        fun choose(format:ExportFormat){if(!busy && !isDestroyed){if(format!=exportFormat)savedIndices.clear();exportFormat=format;ExportPreferences.save(this,format);refresh()}}
+        exportMenu=ExportUi.show(apply,exportFormat,"${plan.width}×${plan.height}",selected={choose(it)},export={format->if(!busy && !isDestroyed && !isFinishing){choose(format);applySelected()}},
+            sourceHdr=sourceHdr,hdrUnavailableReason=null,
+            exportHdr={if(!busy && !isDestroyed && !isFinishing)applySelected(keepHdr=true)})
+    }
+    private fun applySelected(keepHdr:Boolean=sourceHdr){
+        if(busy || loaded==null)return
+        val index=selected;val plan=CompositionOutput.plan(sourceW,sourceH,items[index].crop,output);val format=exportFormat
         preview.beginApply()
         task("正在出图 · ${plan.width}×${plan.height}",{c->
-            CompositionRender.save(applicationContext,CompositionFiles.source(applicationContext,originalPath),plan,appearance,output,c,progress={message->
-                runOnUiThread{if(!isDestroyed && token===c && !c.cancelled)status.text="$message · ${plan.width}×${plan.height}"}
-            }){engine=it}
-        },committed=true){location->savedIndices.add(index);preview.saved();status.text="已另存 · ${plan.width}×${plan.height}\n$location";status.contentDescription="已保存到 $location";BlurToast.show(this,"构图已保存")}
+            val original=CompositionFiles.source(applicationContext,originalPath)
+            val r=prepared
+            if(r!=null){
+                if(keepHdr)try{LeicaEngine(applicationContext).use{it.saveHdr(r,plan.crop,plan.width to plan.height,c){message->runOnUiThread{if(token===c && !isDestroyed)status.text=message}}}}
+                catch(t:HdrUnsupportedException){c.check();sourceHdr=false;CompositionFiles.save(applicationContext,r.file,plan.crop,c,plan.width to plan.height,format)}
+                else CompositionFiles.save(applicationContext,r.file,plan.crop,c,plan.width to plan.height,format)
+            }else{
+                if(keepHdr){
+                    try{HdrPhotoExport.saveSource(applicationContext,Uri.fromFile(original),plan.crop,c,plan.width to plan.height)}
+                    catch(t:HdrUnsupportedException){c.check();sourceHdr=false;CompositionFiles.save(applicationContext,original,plan.crop,c,plan.width to plan.height,format)}
+                }else CompositionFiles.save(applicationContext,original,plan.crop,c,plan.width to plan.height,format)
+            }
+        },committed=true){location->savedIndices.add(index);preview.saved();status.text="已另存 · ${plan.width}×${plan.height} · ${if(keepHdr && sourceHdr)"Ultra HDR JPEG"else if(keepHdr)"${format.label} · 已转 SDR"else format.label}\n$location";status.contentDescription="已保存到 $location";BlurToast.show(this,"构图已保存")}
     }
     private fun refresh(){
         bar.visibility=if(busy)View.VISIBLE else View.GONE;cancel.visibility=bar.visibility;cancel.isEnabled=token?.cancelled!=true
         retry.visibility=if(!busy && loaded==null)View.VISIBLE else View.GONE
-        apply.isEnabled=!busy && loaded!=null && selected !in savedIndices;apply.text=if(selected in savedIndices)"已保存"else if(busy && loaded!=null)"正在出图…"else "应用并另存"
+        apply.isEnabled=!busy && loaded!=null;apply.text=if(busy && loaded!=null)"正在出图…"else "导出"
         cards.forEachIndexed{i,v->v.isEnabled=!busy;v.isSelected=i==selected;v.setBackgroundColor(if(i==selected)0xff54342e.toInt()else 0xff242526.toInt())}
         items.getOrNull(selected)?.let{item->
             val plan=CompositionOutput.plan(sourceW,sourceH,item.crop,output)
@@ -143,16 +176,18 @@ class CompositionActivity:AppCompatActivity() {
         }
     }
     private fun leave(){cancelTask();finish()}
-    override fun onSaveInstanceState(out:Bundle){super.onSaveInstanceState(out);out.putInt("selected",selected);out.putIntArray("savedIndices",savedIndices.toIntArray())}
+    override fun onSaveInstanceState(out:Bundle){super.onSaveInstanceState(out);out.putInt("selected",selected);out.putString("export-format",exportFormat.id);out.putIntArray("savedIndices",savedIndices.toIntArray())}
     override fun onResume(){super.onResume();if(::preview.isInitialized)preview.setActive(true)}
     override fun onPause(){
+        exportMenu?.dismiss();exportMenu=null
         if(::preview.isInitialized)preview.setActive(false)
         cards.forEach{it.animate().cancel();it.alpha=1f;it.translationY=0f}
         super.onPause()
     }
+    private fun disposePrepared(r:LeicaEngine.Result?){r?:return;r.original.recycle();r.result.recycle();r.file.delete();HdrResultStore.remove(r.file)}
     override fun onDestroy(){
         token?.cancelled=true;gaic.cancelRun();engine?.cancelRun();preview.close();loadingPreview?.recycle();loadingPreview=null;loaded?.bitmap?.recycle();loaded=null
-        val release=isFinishing;worker.execute{if(release){CompositionFiles.release(applicationContext,sourcePath);if(originalPath!=sourcePath)CompositionFiles.release(applicationContext,originalPath)}}
+        val release=isFinishing;worker.execute{disposePrepared(prepared);prepared=null;if(release){CompositionFiles.release(applicationContext,sourcePath);if(originalPath!=sourcePath)CompositionFiles.release(applicationContext,originalPath)}}
         worker.shutdown();super.onDestroy()
     }
 }

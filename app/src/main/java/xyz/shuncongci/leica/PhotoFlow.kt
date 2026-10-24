@@ -21,6 +21,9 @@ class PhotoFlow {
     fun showParameters(value:Boolean){parametersExpanded=value}
     var blur = false; private set
     var colorEnabled = true; private set
+    var exportFormat=ExportFormat.DEFAULT;private set
+    /** Encoding only: keep render staleness, focus/depth/subject caches and current pixels unchanged. */
+    fun selectExportFormat(value:ExportFormat){check(!busy);if(exportFormat==value)return;exportFormat=value;if(hasResult)saved=false}
     var style = LeicaStyle.DEFAULT; private set
     /** A style edit changes future rendering only; existing pixels and geometry caches remain intact. */
     fun selectStyle(value:LeicaStyle) {
@@ -35,6 +38,8 @@ class PhotoFlow {
         if(mode==processingMode){picking=false;subjectPicking=false;return}
         colorEnabled=mode.colorEnabled;blur=mode.blurEnabled;picking=false;subjectPicking=false;parametersChanged()
     }
+    var subjectResolution=SubjectResolution.HIGH;private set
+    fun selectSubjectResolution(value:SubjectResolution){check(!busy);if(value!=subjectResolution){subjectResolution=value;subjectInvalidated();parametersChanged()}}
     var subjectEnabled=false;private set
     private val subjectDone=linkedSetOf<LegendaryMath.Point>()
     var subjectRevision=0L;private set
@@ -61,11 +66,11 @@ class PhotoFlow {
     }
     fun removeSubjectPoint(point:LegendaryMath.Point):Boolean {
         check(!busy && subjectEnabled);if(point !in subjectPoints)return false
-        subjectPoints=subjectPoints.filter{it!=point};subjectRevision++;parametersChanged();return true
+        subjectPoints=subjectPoints.filter{it!=point};subjectDone.retainAll(subjectPoints.toSet());subjectRevision++;parametersChanged();return true
     }
     fun moveSubjectPoint(old:LegendaryMath.Point,point:LegendaryMath.Point):Boolean {
         check(!busy && subjectEnabled);if(old !in subjectPoints || point==old)return false
-        subjectPoints=subjectPoints.map{if(it==old)point else it}.distinct();subjectRevision++;parametersChanged();return true
+        subjectPoints=subjectPoints.map{if(it==old)point else it}.distinct();subjectDone.retainAll(subjectPoints.toSet());subjectRevision++;parametersChanged();return true
     }
     fun undoSubjectPoint(){check(!busy && subjectEnabled);subjectPoints.lastOrNull()?.let{removeSubjectPoint(it)}}
     fun clearSubjectPoints(){check(!busy && subjectEnabled);subjectPoints=emptyList();subjectInvalidated();parametersChanged()}
@@ -96,5 +101,21 @@ class PhotoFlow {
     fun compositionApplied() { check(!busy && hasPhoto);hasResult=true;saved=false;picking=false;subjectPicking=false;parametersExpanded=false }
     fun saved() { saved=true }
     fun focusUnreliable() { check(operation==Operation.FOCUS_PREVIEW);focus=null;picking=false;subjectInvalidated() }
-    fun cancel() { check(operation==Operation.GENERATE || operation==Operation.FOCUS_PREVIEW || operation==Operation.DEPTH || operation==Operation.COMPOSITION);cancelling=true }
+    fun snapshot():Map<String,String> = mapOf(
+        "mode" to processingMode.name,"style" to style.id,"format" to exportFormat.name,
+        "subject" to subjectEnabled.toString(),"subjectResolution" to subjectResolution.longEdge.toString(),
+        "points" to subjectPoints.joinToString(";"){"${it.x},${it.y}"},
+        "focus" to (focus?.let{"${it.x},${it.y}"}?:""),"aperture" to aperture.toString(),
+        "hasResult" to hasResult.toString(),"saved" to saved.toString(),"stale" to resultStale.toString(),"expanded" to parametersExpanded.toString())
+    fun restore(state:Map<String,String>){
+        fun point(s:String)=s.split(",").let{LegendaryMath.Point(it[0].toFloat(),it[1].toFloat())}
+        photoLoaded()
+        val mode=ProcessingMode.valueOf(state.getValue("mode"));colorEnabled=mode.colorEnabled;blur=mode.blurEnabled
+        style=LeicaStyle.fromId(state["style"]);exportFormat=ExportFormat.valueOf(state.getValue("format"))
+        subjectEnabled=state["subject"]=="true";subjectResolution=SubjectResolution.from(state["subjectResolution"]?.toIntOrNull()?:2048)
+        subjectPoints=state["points"].orEmpty().split(";").filter{it.isNotEmpty()}.map(::point).distinct()
+        focus=state["focus"]?.takeIf{it.isNotEmpty()}?.let(::point);aperture=state.getValue("aperture").toFloat();FullFrameOptics.checkAperture(aperture)
+        hasResult=state["hasResult"]=="true";saved=state["saved"]=="true";resultStale=state["stale"]=="true";parametersExpanded=state["expanded"]!="false"
+    }
+    fun cancel() { check(operation==Operation.GENERATE || operation==Operation.FOCUS_PREVIEW || operation==Operation.DEPTH || operation==Operation.COMPOSITION || operation==Operation.SAVE);cancelling=true }
 }

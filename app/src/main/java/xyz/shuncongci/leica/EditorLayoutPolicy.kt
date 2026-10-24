@@ -4,6 +4,9 @@ package xyz.shuncongci.leica
 object EditorLayoutPolicy {
     data class Rect(val x:Int,val y:Int,val w:Int,val h:Int)
     data class Layout(val preview:Rect,val controls:Rect,val sideBySide:Boolean)
+    /** Expanded parameters reserve preview height: remove the entire space toolbar, including its gap. */
+    fun showSpaceTools(spaceMode:Boolean,depthReady:Boolean,expanded:Boolean,composing:Boolean,busy:Boolean,loading:Boolean)=
+        spaceMode && depthReady && !expanded && !composing && !busy && !loading
     fun compactChrome(heightDp:Int,fontScale:Float)=heightDp<500 || (fontScale>=1.5f && heightDp<650)
     fun arrange(w:Int,h:Int,density:Float,fontScale:Float,expanded:Boolean):Layout {
         require(w>=0 && h>=0 && density>0 && density.isFinite() && fontScale>0 && fontScale.isFinite())

@@ -3,6 +3,12 @@ package xyz.shuncongci.leica
 import kotlin.math.*
 
 object DepthVisualMath {
+    // Display-only density, shared by coarse/full relief and subject layers. No model size change.
+    const val SPACE_GRID_EDGE=48
+    fun spatialGrid(w:Int,h:Int):Pair<Int,Int> {
+        val (cols,rows)=grid(w,h,SPACE_GRID_EDGE)
+        return cols.coerceAtMost(w) to rows.coerceAtMost(h)
+    }
     data class Tiles(val cols:Int,val rows:Int,val depth:FloatArray)
     data class Data(val w:Int,val h:Int,val gray:IntArray,val thermal:IntArray,val tiles:Tiles)
     private val palette=intArrayOf(0x101025,0x312366,0x842C7F,0xD44B53,0xF69355,0xFFE6AE)
@@ -24,7 +30,7 @@ object DepthVisualMath {
             val v=FullFrameOptics.sample(d,x,y,w,h).coerceIn(0f,1f);val n=(v*255).roundToInt()
             gray[y*w+x]=(255 shl 24) or (n shl 16) or (n shl 8) or n;thermal[y*w+x]=heat(v)
         }}
-        val (cols,rows)=grid(d.w,d.h,24);val depths=FloatArray(cols*rows)
+        val (cols,rows)=spatialGrid(d.w,d.h);val depths=FloatArray(cols*rows)
         for(y in 0 until rows){cancel.check();for(x in 0 until cols){
             val x0=x*d.w/cols;val x1=max(x0+1,(x+1)*d.w/cols).coerceAtMost(d.w)
             val y0=y*d.h/rows;val y1=max(y0+1,(y+1)*d.h/rows).coerceAtMost(d.h)
@@ -39,8 +45,16 @@ object DepthVisualMath {
         val p=phase(index)*2*PI
         return (.30*sin(time*2*PI+p)+.16*cos(time*4*PI+p*3)).toFloat()
     }
-    fun project(x:Float,y:Float,z:Float,yaw:Float,pitch:Float,out:FloatArray,offset:Int=0) {
-        val cy=cos(yaw);val sy=sin(yaw);val cp=cos(pitch);val sp=sin(pitch)
+    /** Reused by the dense relief: four trig evaluations per frame, not per tile corner. */
+    class Projector {
+        private var cy=1f;private var sy=0f;private var cp=1f;private var sp=0f
+        fun setAngles(yaw:Float,pitch:Float){cy=cos(yaw);sy=sin(yaw);cp=cos(pitch);sp=sin(pitch)}
+        fun project(x:Float,y:Float,z:Float,out:FloatArray,offset:Int=0)=
+            projectCamera(x,y,z,cy,sy,cp,sp,out,offset)
+    }
+    fun project(x:Float,y:Float,z:Float,yaw:Float,pitch:Float,out:FloatArray,offset:Int=0) =
+        projectCamera(x,y,z,cos(yaw),sin(yaw),cos(pitch),sin(pitch),out,offset)
+    private fun projectCamera(x:Float,y:Float,z:Float,cy:Float,sy:Float,cp:Float,sp:Float,out:FloatArray,offset:Int) {
         val xx=x*cy+z*sy;val zz=-x*sy+z*cy;val yy=y*cp-zz*sp;val depth=y*sp+zz*cp
         val perspective=3.8f/(3.8f-depth)
         out[offset]=xx*perspective;out[offset+1]=yy*perspective;out[offset+2]=depth

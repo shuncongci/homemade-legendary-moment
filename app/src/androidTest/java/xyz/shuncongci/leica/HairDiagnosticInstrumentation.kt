@@ -17,6 +17,16 @@ class HairDiagnosticInstrumentation:Instrumentation(){
         val info=Bundle()
         try {
             val ctx=targetContext
+            if(args.getString("case")=="export-motion"){
+                val dir=MotionDiagnostic.run(this,ctx);info.putString("stream","Motion endpoint diagnostic complete: ${dir.absolutePath}\n");finish(Activity.RESULT_OK,info);return
+            }
+            if(args.getString("case")=="export-formats"){
+                val dir=ExportDiagnostic.run(ctx);info.putString("stream","Export codec diagnostic complete: ${dir.absolutePath}\n");finish(Activity.RESULT_OK,info);return
+            }
+            if(args.getString("case")=="hdr-metadata"){
+                val dir=HdrDiagnostic.run(ctx,args.getString("hdr-source")=="user")
+                info.putString("stream","HDR metadata-only diagnostic complete (not HDR visual acceptance): ${dir.absolutePath}\n");finish(Activity.RESULT_OK,info);return
+            }
             val source=File(ctx.filesDir,"hair-diagnostic-source.jpg")
             require(source.isFile){"Missing explicit test source"}
             val name=args.getString("case")?:"hair-diagnostic-2048"

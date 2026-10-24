@@ -12,7 +12,7 @@ object SubjectDepthMotion {
     fun create(depth:LegendaryMath.Frame,alpha:LegendaryMath.Frame,focus:Float,cancel:Cancel):Data {
         cancel.check();require(depth.channels==1 && alpha.channels==1 && focus.isFinite() && focus in 0f..1f)
         require(depth.data.all{it.isFinite() && it in 0f..1f} && alpha.data.all{it.isFinite() && it in 0f..1f})
-        val (cols,rows)=DepthVisualMath.grid(alpha.w,alpha.h,24)
+        val (cols,rows)=DepthVisualMath.spatialGrid(alpha.w,alpha.h)
         val fg=FloatArray(cols*rows);val bg=FloatArray(cols*rows);val coverage=FloatArray(cols*rows)
         for(y in 0 until rows){cancel.check();for(x in 0 until cols){
             val x0=x*alpha.w/cols;val x1=max(x0+1,(x+1)*alpha.w/cols).coerceAtMost(alpha.w)

@@ -10,11 +10,11 @@ class DepthVisualTest {
         assertEquals(0xff000000.toInt(),v.gray[0]);assertEquals(0xffffffff.toInt(),v.gray[100]);assertEquals(DepthVisualMath.heat(0f),v.thermal[0]);assertEquals(DepthVisualMath.heat(1f),v.thermal[100]);assertArrayEquals(old,d.data,0f)
     }
     @Test fun visualizationSizeIsUiOnlyBounded(){
-        val d=LegendaryMath.Frame(1200,1600,1,FloatArray(1200*1600){.5f});val v=DepthVisualMath.create(d,Cancel());assertEquals(960,max(v.w,v.h));assertEquals(1200,d.w);assertEquals(1600,d.h);assertEquals(24,max(v.tiles.cols,v.tiles.rows))
+        val d=LegendaryMath.Frame(1200,1600,1,FloatArray(1200*1600){.5f});val v=DepthVisualMath.create(d,Cancel());assertEquals(960,max(v.w,v.h));assertEquals(1200,d.w);assertEquals(1600,d.h);assertEquals(48,max(v.tiles.cols,v.tiles.rows))
     }
     @Test fun reliefTilesUseMeanOfModelPixelsNotRandomDepth(){
         val d=LegendaryMath.Frame(96,96,1,FloatArray(9216){if(it%96<48).2f else .8f});val v=DepthVisualMath.create(d,Cancel())
-        for(y in 0 until v.tiles.rows)for(x in 0 until v.tiles.cols)assertEquals(if(x<12).2f else .8f,v.tiles.depth[y*24+x],1e-6f)
+        for(y in 0 until v.tiles.rows)for(x in 0 until v.tiles.cols)assertEquals(if(x<v.tiles.cols/2).2f else .8f,v.tiles.depth[y*v.tiles.cols+x],1e-6f)
     }
     @Test fun loadingHasBothDirectionsAndNonsequentialPhases(){
         val z=(0..143).map{DepthVisualMath.loadingZ(it,.13f)};assertTrue(z.any{it>.3f});assertTrue(z.any{it<-.3f});assertTrue(z.all{abs(it)<=.46f});assertTrue(z.zipWithNext().any{it.first>it.second});assertTrue(z.zipWithNext().any{it.first<it.second})

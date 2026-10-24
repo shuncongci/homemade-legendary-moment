@@ -95,11 +95,17 @@ object LegendaryMath {
         return base to high
     }
     /** Render one whole 2048-fit photo; optical multiscale passes are not image tiles. */
-    private fun multiscale(rgb: Frame,coc: Frame,cancel: Cancel,globalScales: FloatArray?,onPass:((Frame)->Unit)?,infer: (Frame,Frame)->Frame): Frame {
+    private fun multiscale(rgb: Frame,coc: Frame,cancel: Cancel,globalScales: FloatArray?,onPass:((Frame)->Unit)?,checkpoint:MultiscaleCheckpoint?,infer: (Frame,Frame)->Frame): Frame {
         val target=max(1f,coc.data.maxOf{abs(it)}/8)
         var scale=1f;var previous=1f;var composite: Frame?=null;var index=0
         require(globalScales==null || (globalScales.isNotEmpty() && globalScales.all{it.isFinite() && it>=1f}))
-        while(true) {
+        val saved=checkpoint?.load()
+        var finished=false
+        if(saved!=null){
+            require(saved.composite.w==rgb.w && saved.composite.h==rgb.h && saved.composite.channels==3 && saved.scale.isFinite() && saved.scale>=1f && saved.previous.isFinite() && saved.previous>=1f && saved.index>=1)
+            scale=saved.scale;previous=saved.previous;index=saved.index;composite=saved.composite;finished=saved.finished
+        }
+        while(!finished) {
             cancel.check();val requested=globalScales?.get(index) ?: scale
             val w=max(2,ceil(rgb.w/requested).toInt());val h=max(2,ceil(rgb.h/requested).toInt())
             val actual=globalScales?.get(index) ?: max(rgb.w.toFloat()/w,rgb.h.toFloat()/h)
@@ -119,11 +125,12 @@ object LegendaryMath {
                     for(c in 0..2){val at=c*rgb.size+i;into.data[at]=into.data[at]*(1-weight)+enlarged.data[at]*weight}
                 } }
             }
-            // Borrowed real composite. Observer must copy and must never change production pixels.
+            previous=actual;index++
+            finished=if(globalScales!=null)index>=globalScales.size else scale>=target
+            if(!finished && globalScales==null)scale=min(scale*2,target)
+            checkpoint?.save(MultiscaleCheckpoint.State(scale,previous,index,finished,composite!!),cancel)
+            // Persistence must precede observer mutation / animation and cancellation.
             cancel.check();onPass?.invoke(composite!!);cancel.check()
-            previous=actual
-            if(globalScales!=null){index++;if(index>=globalScales.size)break}
-            else {if(scale>=target)break;scale=min(scale*2,target)}
         }
         val output=composite!!
         parallelFor(rgb.h) { y -> for(i in y*rgb.w until (y+1)*rgb.w) {
@@ -131,6 +138,91 @@ object LegendaryMath {
             for(c in 0..2){val at=c*rgb.size+i;output.data[at]=quantize(rgb.data[at]*(1-weight)+output.data[at]*weight)}
         } }
         return output
+    }
+    /** HDR companion render: same production ARNet, depth/CoC/alpha/PSFs; no SDR shoulder or invented clipped-light recovery. */
+    fun renderHdr(colored:Planes,sharp:Frame,depth:Frame,focus:Float,aperture:Float,cancel:Cancel,subjectMask:Frame?=null,infer:(Frame,Frame)->Frame):Frame {
+        return renderHdrCombined(colored,sharp,depth,focus,aperture,cancel,subjectMask,infer=infer)
+    }
+    /** One network pass, independent SDR/HDR radiance. Share geometry, never substitute HDR light for SDR. */
+    fun renderHdrCombined(colored:Planes,sharp:Frame,depth:Frame,focus:Float,aperture:Float,cancel:Cancel,
+        subjectMask:Frame?=null,onSdr:(Planes)->Unit = {},onPass:((Frame)->Unit)?=null,
+        progress:(String)->Unit = {},checkpoint:MultiscaleCheckpoint?=null,infer:(Frame,Frame)->Frame):Frame {
+        HdrMath.checked(sharp);require(sharp.w==colored.width && sharp.h==colored.height)
+        val raw=FullFrameOptics.coc(depth,focus,aperture,sharp.w,sharp.h,cancel)
+        val alpha=subjectMask?.let{SharpSubjectEdges.renderAlpha(colored,it,cancel)}
+        val coc=if(alpha==null)raw else SubjectProtectionMath.protectedCoc(raw,alpha,cancel)
+        if(coc.data.maxOf{abs(it)}<1e-6f){cancel.check();onSdr(colored);return sharp}
+        // The network input is exactly the SDR base, independent of all HDR gains.
+        // Transport positive HDR excess and negative HDR deficit separately; neither
+        // may modify the SDR residual, network input, or SDR compositor.
+        data class PreparedLight(val rendered:Frame,val hdrHigh:Frame,val hdrLoss:Frame?,val sdr:Planes)
+        fun prepareLight():PreparedLight {
+            val hasHighlight=(0 until colored.size).any{(colored.p0[it].toInt() and 255)>80 || (colored.p1[it].toInt() and 255)>80 || (colored.p2[it].toInt() and 255)>80}
+            val (base,sdrHigh)=if(hasHighlight)split(colored,cancel) else
+                rgb(colored) to Frame(sharp.w,sharp.h,3,FloatArray(sharp.data.size))
+            val hdrHigh=Frame(sharp.w,sharp.h,3,FloatArray(sharp.data.size))
+            var hdrLoss:Frame?=null
+            for(i in base.data.indices){if(i%sharp.w==0)cancel.check()
+                val delta=sharp.data[i]-HdrMath.linear(base.data[i])
+                hdrHigh.data[i]=max(0f,delta)
+                if(delta<0f){
+                    if(hdrLoss==null)hdrLoss=Frame(sharp.w,sharp.h,3,FloatArray(sharp.data.size))
+                    hdrLoss.data[i]=-delta
+                }
+            }
+            val plateCoc=if(alpha==null)coc else Frame(coc.w,coc.h,1,coc.data.copyOf()).also{BackgroundPlate.fillInPlace(alpha,cancel,base,it)}
+            val pass=if(alpha==null)onPass else onPass?.let{subjectPreview(colored,alpha,it)}
+            val rendered=multiscale(base,plateCoc,cancel,null,pass,checkpoint,infer)
+            fun sdrResult():Planes {
+                if(sdrHigh.data.all{it==0f}){
+                    val out=planes(rendered)
+                    return if(alpha==null)out else SubjectProtectionMath.composite(colored,out,alpha,cancel)
+                }
+                progress("SDR高光合成 · 保持原亮度")
+                val radiance=BokehRadiance.boost(sdrHigh,coc,cancel)
+                ClippedHighlights.recoverInPlace(radiance,colored,sdrHigh,coc,cancel)
+                var foreground:Frame?=null
+                val optical=if(alpha==null)SoftBokehEdges.softenInPlace(HighlightScatter.optical(radiance,coc,aperture,cancel),coc,cancel)
+                    else HighlightScatter.opticalLayers(radiance,coc,aperture,cancel).let{
+                        foreground=SoftBokehEdges.softenInPlace(it.foreground,coc,cancel)
+                        SoftBokehEdges.softenInPlace(it.color,coc,cancel)
+                    }
+                val out=Planes(sharp.w,sharp.h)
+                for(c in 0..2)for(i in 0 until sharp.size){if(i%sharp.w==0)cancel.check();val at=c*sharp.size+i
+                    val value=srgb(SoftBokehEdges.shoulder(linear(rendered.data[at]),optical.data[at]))
+                    out.plane(c)[i]=Math.rint((value.coerceIn(0f,1f)*255).toDouble()).toInt().toByte()
+                }
+                return if(alpha==null)out else BokehRadiance.protect(colored,out,alpha,checkNotNull(foreground),cancel,radiance,coc)
+            }
+            return PreparedLight(rendered,hdrHigh,hdrLoss,sdrResult())
+        }
+        val prepared=prepareLight() // SDR optical scratch is out of scope before HDR scatter.
+        cancel.check();onSdr(prepared.sdr)
+        val rendered=prepared.rendered;val high=prepared.hdrHigh
+        progress("HDR高光合成 · 独立光能，不重跑模型")
+        var lossForeground:Frame?=null
+        val lossOptical=prepared.hdrLoss?.let{loss->
+            if(alpha==null)SoftBokehEdges.softenInPlace(HighlightScatter.optical(loss,coc,aperture,cancel),coc,cancel)
+            else HighlightScatter.opticalLayers(loss,coc,aperture,cancel).let{
+                lossForeground=SoftBokehEdges.softenInPlace(it.foreground,coc,cancel)
+                SoftBokehEdges.softenInPlace(it.color,coc,cancel)
+            }
+        }
+        var foreground:Frame?=null
+        val optical=if(alpha==null)SoftBokehEdges.softenInPlace(HighlightScatter.optical(high,coc,aperture,cancel),coc,cancel)
+            else HighlightScatter.opticalLayers(high,coc,aperture,cancel).let{
+                foreground=SoftBokehEdges.softenInPlace(it.foreground,coc,cancel)
+                SoftBokehEdges.softenInPlace(it.color,coc,cancel)
+            }
+        for(i in 0 until sharp.size){if(i%sharp.w==0)cancel.check();val a=alpha?.data?.get(i)?.coerceIn(0f,1f)?:0f
+            for(c in 0..2){val at=c*sharp.size+i
+                // Non-negative physical radiance after signed residual transport; no global exposure factor.
+                val blurred=max(0f,HdrMath.linear(rendered.data[at])+optical.data[at]-(lossOptical?.data?.get(at)?:0f))
+                val local=if(coc.data[i]>0)high.data[at]-(prepared.hdrLoss?.data?.get(at)?:0f)else 0f
+                val incoming=max(0f,(foreground?.data?.get(at)?:0f)-(lossForeground?.data?.get(at)?:0f)-local)
+                rendered.data[at]=sharp.data[at]*a+blurred*(1-a)+incoming*a
+            }
+        };return HdrMath.checked(rendered)
     }
     internal data class Kernel(val half: Int,val data: FloatArray) { val w get()=half*2+1 }
     internal fun kernel(radius: Int,aperture: Float): Kernel {
@@ -157,13 +249,13 @@ object LegendaryMath {
     }
     internal fun scatter(high:Frame,coc:Frame,aperture:Float,cancel:Cancel):Frame =
         HighlightScatter.scatter(high,coc,aperture,cancel)
-    fun render(colored: Planes,depth: Frame,focus: Float,aperture: Float,cancel: Cancel,progress: (String)->Unit = {},highlightRenderer:((Frame,Frame,Float,Cancel)->Frame)? = null,onPass:((Frame)->Unit)?=null,subjectMask:Frame?=null,highlightBoost:Float=BokehRadiance.DEFAULT_GAIN,infer: (Frame,Frame)->Frame): Planes {
+    fun render(colored: Planes,depth: Frame,focus: Float,aperture: Float,cancel: Cancel,progress: (String)->Unit = {},highlightRenderer:((Frame,Frame,Float,Cancel)->Frame)? = null,onPass:((Frame)->Unit)?=null,subjectMask:Frame?=null,highlightBoost:Float=BokehRadiance.DEFAULT_GAIN,checkpoint:MultiscaleCheckpoint?=null,infer: (Frame,Frame)->Frame): Planes {
         val rawCoc=FullFrameOptics.coc(depth,focus,aperture,colored.width,colored.height,cancel)
         // One render-resolution alpha (edge ramp tightened when enlarged) for CoC, plate and composite.
         val alpha=subjectMask?.let{SharpSubjectEdges.renderAlpha(colored,it,cancel)}
         val coc=if(alpha==null)rawCoc else SubjectProtectionMath.protectedCoc(rawCoc,alpha,cancel)
         var foreground:Frame?=null;var sourceHigh:Frame?=null
-        val rendered=renderCoc(colored,coc,aperture,cancel,progress=progress,highlightRenderer=highlightRenderer,onPass=onPass,highlightBoost=highlightBoost,onForeground=if(alpha==null)null else {light->foreground=light},onHighlightSource=if(alpha==null)null else {source->sourceHigh=source},subjectAlpha=alpha,infer=infer)
+        val rendered=renderCoc(colored,coc,aperture,cancel,progress=progress,highlightRenderer=highlightRenderer,onPass=onPass,highlightBoost=highlightBoost,onForeground=if(alpha==null)null else {light->foreground=light},onHighlightSource=if(alpha==null)null else {source->sourceHigh=source},subjectAlpha=alpha,checkpoint=checkpoint,infer=infer)
         return if(alpha==null)rendered else foreground?.let{BokehRadiance.protect(colored,rendered,alpha,it,cancel,sourceHigh,coc)}?:SubjectProtectionMath.composite(colored,rendered,alpha,cancel)
     }
     /** Preview of a background-plate pass: temporarily show the sharp subject over it, then
@@ -179,7 +271,7 @@ object LegendaryMath {
             for(i in 0 until n){if(!(alpha.data[i]>0f))continue;for(c in 0..2)frame.data[c*n+i]=saved[k*3+c];k++}
         }
     }
-    fun renderCoc(colored: Planes,coc: Frame,aperture: Float,cancel: Cancel,progress: (String)->Unit = {},globalScales: FloatArray? = null,highlightRenderer:((Frame,Frame,Float,Cancel)->Frame)? = null,highlightSplitter:(Planes,Cancel)->Pair<Frame,Frame> = ::split,onPass:((Frame)->Unit)?=null,highlightBoost:Float=BokehRadiance.DEFAULT_GAIN,onForeground:((Frame)->Unit)?=null,onHighlightSource:((Frame)->Unit)?=null,highlightShoulder:Boolean=highlightRenderer==null,subjectAlpha:Frame?=null,clippedRecovery:Boolean=highlightRenderer==null,infer: (Frame,Frame)->Frame): Planes {
+    fun renderCoc(colored: Planes,coc: Frame,aperture: Float,cancel: Cancel,progress: (String)->Unit = {},globalScales: FloatArray? = null,highlightRenderer:((Frame,Frame,Float,Cancel)->Frame)? = null,highlightSplitter:(Planes,Cancel)->Pair<Frame,Frame> = ::split,onPass:((Frame)->Unit)?=null,highlightBoost:Float=BokehRadiance.DEFAULT_GAIN,onForeground:((Frame)->Unit)?=null,onHighlightSource:((Frame)->Unit)?=null,highlightShoulder:Boolean=highlightRenderer==null,subjectAlpha:Frame?=null,clippedRecovery:Boolean=highlightRenderer==null,checkpoint:MultiscaleCheckpoint?=null,infer: (Frame,Frame)->Frame): Planes {
         require(coc.w==colored.width && coc.h==colored.height && coc.channels==1)
         if(subjectAlpha!=null)require(subjectAlpha.channels==1 && subjectAlpha.w==colored.width && subjectAlpha.h==colored.height)
         cancel.check()
@@ -190,7 +282,7 @@ object LegendaryMath {
         // [rgb] is a frame owned by this call. Highlight scatter keeps the protected [coc].
         fun bokeh(rgb:Frame):Frame {
             val plateCoc=if(subjectAlpha==null)coc else Frame(coc.w,coc.h,1,coc.data.copyOf()).also{BackgroundPlate.fillInPlace(subjectAlpha,cancel,rgb,it)}
-            return multiscale(rgb,plateCoc,cancel,globalScales,pass,infer)
+            return multiscale(rgb,plateCoc,cancel,globalScales,pass,checkpoint,infer)
         }
         progress("整图高光分离 ${colored.width}×${colored.height}")
         val hasHighlight=(0 until colored.size).any{(colored.p0[it].toInt() and 255)>80 || (colored.p1[it].toInt() and 255)>80 || (colored.p2[it].toInt() and 255)>80}
