@@ -44,19 +44,31 @@ object LegendaryMath {
         val x=abs(x0);val a=-.75f
         return if(x<=1f) (a+2)*x*x*x-(a+3)*x*x+1 else if(x<2) a*x*x*x-5*a*x*x+8*a*x-4*a else 0f
     }
+    /** O(width+height) geometry, shared by RGB channels; tap multiplication/add order is unchanged. */
+    private class ResizeAxis(source:Int,size:Int,cubic:Boolean,alignCorners:Boolean){
+        val taps=if(cubic)4 else 2
+        val index=IntArray(size*taps);val weight=FloatArray(size*taps)
+        init {for(i in 0 until size){
+            val s=if(alignCorners)if(size==1)0f else i*(source-1f)/(size-1)else (i+.5f)*source/size-.5f
+            val base=floor(s).toInt();val fraction=s-base
+            for(tap in 0 until taps){val d=if(cubic)tap-1 else tap;val at=i*taps+tap
+                index[at]=(base+d).coerceIn(0,source-1)
+                weight[at]=if(cubic)cubic(d-fraction)else if(d==0)1-fraction else fraction
+            }
+        }}
+    }
     /** OpenCV half-pixel linear/cubic; alignCorners is used for torch depth resizing. */
     fun resize(f: Frame,w: Int,h: Int,cubic: Boolean=false,alignCorners: Boolean=false,cancel: Cancel?=null): Frame {
         if(w==f.w && h==f.h)return f
         val out=Frame(w,h,f.channels,FloatArray(w*h*f.channels))
+        val ax=ResizeAxis(f.w,w,cubic,alignCorners);val ay=ResizeAxis(f.h,h,cubic,alignCorners);val taps=ax.taps
         for(c in 0 until f.channels) parallelFor(h) { y ->
             if(y and 31==0)cancel?.check()
-            val sy=if(alignCorners) if(h==1)0f else y*(f.h-1f)/(h-1) else (y+.5f)*f.h/h-.5f
-            val iy=floor(sy).toInt();val fy=sy-iy
+            val offset=c*f.size;val yy=y*taps
             for(x in 0 until w) {
-                val sx=if(alignCorners) if(w==1)0f else x*(f.w-1f)/(w-1) else (x+.5f)*f.w/w-.5f
-                val ix=floor(sx).toInt();val fx=sx-ix;var sum=0f
-                if(cubic) for(dy in -1..2) for(dx in -1..2) sum+=f.data[c*f.size+(iy+dy).coerceIn(0,f.h-1)*f.w+(ix+dx).coerceIn(0,f.w-1)]*cubic(dy-fy)*cubic(dx-fx)
-                else for(dy in 0..1) for(dx in 0..1) sum+=f.data[c*f.size+(iy+dy).coerceIn(0,f.h-1)*f.w+(ix+dx).coerceIn(0,f.w-1)]*(if(dy==0)1-fy else fy)*(if(dx==0)1-fx else fx)
+                val xx=x*taps;var sum=0f
+                for(dy in 0 until taps)for(dx in 0 until taps)
+                    sum+=f.data[offset+ay.index[yy+dy]*f.w+ax.index[xx+dx]]*ay.weight[yy+dy]*ax.weight[xx+dx]
                 out.data[c*out.size+y*w+x]=sum
             }
         }
@@ -82,14 +94,20 @@ object LegendaryMath {
     private fun smooth(t: Float): Float { val x=t.coerceIn(0f,1f);return x*x*(3-2*x) }
     private fun linear(x: Float)=if(x<=.04045f)x/12.92f else ((x+.055f)/1.055f).pow(2.4f)
     private fun srgb(x: Float)=if(x<=.0031308f)12.92f*max(x,0f) else 1.055f*max(x,0f).pow(1/2.4f)-.055f
+    /** Exact byte-domain shortcut only; continuous Float32 values still use the original power function. */
+    internal fun linearQuantized(x:Float):Float {
+        if(!x.isFinite())return linear(x)
+        val code=(x*255).roundToInt().coerceIn(0,255)
+        return if(x.toRawBits()==(code/255f).toRawBits())HdrMath.linearByte(code)else linear(x)
+    }
     private fun quantize(x: Float)=(Math.rint((x.coerceIn(0f,1f)*255).toDouble())/255).toFloat()
     internal fun split(p: Planes,cancel:Cancel): Pair<Frame,Frame> {
         val caps=HighlightExtraction.caps(p,cancel)
         val size=p.size;val base=Frame(p.width,p.height,3,FloatArray(size*3));val high=Frame(p.width,p.height,3,FloatArray(size*3))
         parallelFor(p.height) { y -> for(i in y*p.width until (y+1)*p.width) {
-            val r=linear(byte(p.p0[i]));val g=linear(byte(p.p1[i]));val b=linear(byte(p.p2[i]));val ratio=min(1f,caps[i]/max(max(r,max(g,b)),1e-8f))
+            val r=HdrMath.linearByte(p.p0[i].toInt()and 255);val g=HdrMath.linearByte(p.p1[i].toInt()and 255);val b=HdrMath.linearByte(p.p2[i].toInt()and 255);val ratio=min(1f,caps[i]/max(max(r,max(g,b)),1e-8f))
             for(c in 0..2) { val value=when(c){0->r;1->g;else->b};val at=c*size+i
-                base.data[at]=quantize(srgb(value*ratio));high.data[at]=max(0f,value-linear(base.data[at]))
+                base.data[at]=quantize(srgb(value*ratio));high.data[at]=max(0f,value-linearQuantized(base.data[at]))
             }
         } }
         return base to high
@@ -163,7 +181,7 @@ object LegendaryMath {
             val hdrHigh=Frame(sharp.w,sharp.h,3,FloatArray(sharp.data.size))
             var hdrLoss:Frame?=null
             for(i in base.data.indices){if(i%sharp.w==0)cancel.check()
-                val delta=sharp.data[i]-HdrMath.linear(base.data[i])
+                val delta=sharp.data[i]-linearQuantized(base.data[i])
                 hdrHigh.data[i]=max(0f,delta)
                 if(delta<0f){
                     if(hdrLoss==null)hdrLoss=Frame(sharp.w,sharp.h,3,FloatArray(sharp.data.size))
@@ -189,7 +207,7 @@ object LegendaryMath {
                     }
                 val out=Planes(sharp.w,sharp.h)
                 for(c in 0..2)for(i in 0 until sharp.size){if(i%sharp.w==0)cancel.check();val at=c*sharp.size+i
-                    val value=srgb(SoftBokehEdges.shoulder(linear(rendered.data[at]),optical.data[at]))
+                    val value=srgb(SoftBokehEdges.shoulder(linearQuantized(rendered.data[at]),optical.data[at]))
                     out.plane(c)[i]=Math.rint((value.coerceIn(0f,1f)*255).toDouble()).toInt().toByte()
                 }
                 return if(alpha==null)out else BokehRadiance.protect(colored,out,alpha,checkNotNull(foreground),cancel,radiance,coc)
@@ -217,7 +235,7 @@ object LegendaryMath {
         for(i in 0 until sharp.size){if(i%sharp.w==0)cancel.check();val a=alpha?.data?.get(i)?.coerceIn(0f,1f)?:0f
             for(c in 0..2){val at=c*sharp.size+i
                 // Non-negative physical radiance after signed residual transport; no global exposure factor.
-                val blurred=max(0f,HdrMath.linear(rendered.data[at])+optical.data[at]-(lossOptical?.data?.get(at)?:0f))
+                val blurred=max(0f,linearQuantized(rendered.data[at])+optical.data[at]-(lossOptical?.data?.get(at)?:0f))
                 val local=if(coc.data[i]>0)high.data[at]-(prepared.hdrLoss?.data?.get(at)?:0f)else 0f
                 val incoming=max(0f,(foreground?.data?.get(at)?:0f)-(lossForeground?.data?.get(at)?:0f)-local)
                 rendered.data[at]=sharp.data[at]*a+blurred*(1-a)+incoming*a
@@ -300,7 +318,7 @@ object LegendaryMath {
             else if(onForeground==null)SoftBokehEdges.softenInPlace(HighlightScatter.optical(radiance,coc,aperture,cancel),coc,cancel)
             else HighlightScatter.opticalLayers(radiance,coc,aperture,cancel).let{onHighlightSource?.invoke(radiance);onForeground(SoftBokehEdges.softenInPlace(it.foreground,coc,cancel));SoftBokehEdges.softenInPlace(it.color,coc,cancel)}
         parallelFor(3*colored.height) { row -> for(i in row*colored.width until (row+1)*colored.width) {
-            val b=linear(rendered.data[i]);rendered.data[i]=srgb(if(highlightShoulder)SoftBokehEdges.shoulder(b,optical.data[i]) else b+optical.data[i])
+            val b=linearQuantized(rendered.data[i]);rendered.data[i]=srgb(if(highlightShoulder)SoftBokehEdges.shoulder(b,optical.data[i]) else b+optical.data[i])
         } }
         progress("整图RGB成片转换 ${colored.width}×${colored.height}")
         cancel.check();return planes(rendered)

@@ -46,14 +46,16 @@ object SoftBokehEdges {
         require(light.channels==3 && coc.channels==1 && light.w==coc.w && light.h==coc.h)
         require(coc.data.all{it.isFinite()})
         val w=light.w;val h=light.h;val n=w*h
-        val wt=FloatArray(n){i->if(i and 65535==0)cancel.check();weight(coc.data[i])}
-        if(wt.all{it==0f})return light
-        val hw=FloatArray(n){i->if(wt[i]>0f)half(coc.data[i]) else 0f}
-        val buffers=ThreadLocal.withInitial{Line(max(w,h))}
+        if(coc.data.none{weight(it)>0f})return light
+        // Per-worker line scratch, not two full-resolution float planes or unbounded ThreadLocals.
+        val workers=min(4,Runtime.getRuntime().availableProcessors().coerceAtLeast(1))
+        val buffers=Array(workers){Line(max(w,h))}
         repeat(2){
-            parallelFor(h){y->if(y and 15==0)cancel.check();checkNotNull(buffers.get()).run(light,wt,hw,y*w,1,w,n)}
+            parallelFor(workers){worker->for(y in worker until h step workers){
+                if(y and 15==0)cancel.check();buffers[worker].run(light,coc,y*w,1,w,n)}}
             cancel.check()
-            parallelFor(w){x->if(x and 15==0)cancel.check();checkNotNull(buffers.get()).run(light,wt,hw,x,w,h,n)}
+            parallelFor(workers){worker->for(x in worker until w step workers){
+                if(x and 15==0)cancel.check();buffers[worker].run(light,coc,x,w,h,n)}}
             cancel.check()
         }
         return light
@@ -69,20 +71,21 @@ object SoftBokehEdges {
             val u=(t+.5).coerceIn(0.0,len.toDouble());val k=floor(u).toInt()
             return if(k>=len)p[len] else p[k]+(u-k)*c[k]
         }
-        fun run(f:Frame,wt:FloatArray,hw:FloatArray,start:Int,step:Int,len:Int,n:Int) {
+        val wt=FloatArray(size);val hw=FloatArray(size)
+        fun run(f:Frame,coc:Frame,start:Int,step:Int,len:Int,n:Int) {
             var any=false
-            for(k in 0 until len)if(wt[start+k*step]>0f){any=true;break}
+            for(k in 0 until len){val c=coc.data[start+k*step];wt[k]=weight(c);hw[k]=if(wt[k]>0f)half(c)else 0f;if(wt[k]>0f)any=true}
             if(!any)return
             pw[0]=0.0;pr[0]=0.0;pg[0]=0.0;pb[0]=0.0
             for(k in 0 until len){
-                val i=start+k*step;val a=wt[i].toDouble()
+                val i=start+k*step;val a=wt[k].toDouble()
                 cw[k]=a;cr[k]=a*f.data[i];cg[k]=a*f.data[n+i];cb[k]=a*f.data[2*n+i]
                 pw[k+1]=pw[k]+cw[k];pr[k+1]=pr[k]+cr[k];pg[k+1]=pg[k]+cg[k];pb[k+1]=pb[k]+cb[k]
             }
             // Prefix sums are complete before any write, so in-place output is safe.
             for(k in 0 until len){
-                val i=start+k*step;val own=wt[i];if(own<=0f)continue
-                val lo=k-hw[i].toDouble();val hi=k+hw[i].toDouble()
+                val i=start+k*step;val own=wt[k];if(own<=0f)continue
+                val lo=k-hw[k].toDouble();val hi=k+hw[k].toDouble()
                 val mass=integral(pw,cw,len,hi)-integral(pw,cw,len,lo);if(mass<=1e-12)continue
                 val r=(integral(pr,cr,len,hi)-integral(pr,cr,len,lo))/mass
                 val g=(integral(pg,cg,len,hi)-integral(pg,cg,len,lo))/mass

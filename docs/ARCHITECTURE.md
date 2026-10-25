@@ -1,6 +1,6 @@
 # 实现说明
 
-这份说明介绍我发布的 2.5.1 源码中的处理链路、工作尺寸和已知限制，供阅读或修改代码时参考。
+这份说明介绍我发布的 2.5.2 源码中的处理链路、工作尺寸和已知限制，供阅读或修改代码时参考。
 
 主要代码在 app/src/main/java/xyz/shuncongci/leica。界面入口是 LeicaActivity.kt；LeicaEngine.kt 负责模型会话和处理链路。PhotoFlow.kt、PhotoWorkflow.kt 管理当前照片、处理方式和请求状态，界面操作不应直接绕过这些状态。
 
@@ -28,7 +28,7 @@ SubjectProtectionMath.kt 生成 trimap。半径随分析尺寸缩放，1220 长�
 
 SubjectMatteTiles.kt 对补边后像素数不超过 1248×928 的图使用整图推理。更大的图使用最大 1024×1024 的块，起点间距不超过 768，内部边缘使用 96 像素羽化；只运行含未知边界的块。分块节省峰值内存，但不保证与任意整图推理结果完全一致。
 
-SubjectPointCache.kt 保存当前照片已完成的逐点 alpha。增加或移动点只计算缺失项，删除、重排及开关可复用已完成结果。部分任务失败时保留已完成点，但不会把未完成的一组标为就绪。换照片或清空会重置缓存。
+SubjectPointCache.kt 保存当前照片已完成的逐点 alpha。增加或移动点只计算缺失项，删除、重排及开关可复用已完成结果。部分任务失败时保留已完成点，但不会把未完成的一组标为就绪。换照片或清空会重置缓存。2.5.2 将显式选择变更与只读展示刷新分开：选择身份包含焦点与分析分辨率，选点集合也必须匹配；过时刷新不能裁掉新选择的缓存。每点先持久提交再对外宣告完成，恢复从已校验 blob 读取，而不是复用 UI 完成计数。EditSession.finishSubjects 只在当前 job、身份和选点集合仍一致且全点完成时条件提交；展示失败不会撤销已持久完成点。实际页面返回及进程恢复行为仍需真机确认。
 
 多个 alpha 先取逐像素最大值，再由 SubjectSelectionMath.joinContacts 处理相触主体的内部接缝。这个步骤只提高局部 alpha，不改逐点缓存。它是启发式处理，细小真实空隙仍可能被误填，不能承诺所有背景缝和外轮廓都绝对不变。
 
@@ -41,6 +41,10 @@ Cancel、ActiveNativeRun 和 HardwareSession 管理取消与原生资源。旧�
 HDR、空间与恢复
 
 HdrAutoSource 在 Android 14+ 检测增益图；HdrSource 当前只接收 SDR 基底 Ultra HDR JPEG，不把 HEIF、PQ、HLG 当作可互换输入。HdrMath、HdrRecipe、HdrResultStore 管理配对结果。未编辑的几何导出可使用来源增益图；调色/虚化后的结果通过 HdrPairExport 重算相对于实际 JPEG SDR 基底的增益图。UltraHdrContainer 写容器，HdrExportPolicy 校验编码回读尺寸和参数，检查失败不发布。HdrMemory 在各阶段检查预算；OOM、取消和 I/O 失败必须传播，不能伪装成 SDR 成功。原始文件编码、任意色域和全部手机 HDR 显示效果不在此契约中。
+
+2.5.2 的非虚化 HDR 通过 HdrReconstruction.renderRows、HdrPixels / HdrFloatFile、HdrResultStore.readRows 交接无损 Float32 文件，来源采样使用有界行缓存，读取使用有界 64 KiB 缓冲；不是把整幅数组换成同尺寸 direct/mmap。增益计算读取实际 JPEG 基底的最多 16 行，压缩中间数据使用私有临时文件；裁框使用线性光行视图并保持原 Double 积分顺序。检查点的字节、校验、原子提交和所有权规则保留。文件交接增加缓存空间与读写，空间不足按 I/O 失败处理，不转成 SDR 成功。兼容 Frame 接口及完整 HDR 虚化仍有整幅分配，不代表全路径内存已经解决。
+
+近原尺寸重建只复用少量精确来源行；LegendaryMath 预计算插值轴与权重，字节线性值精确查表，连续值回到原公式。FusionFir 保留原有限脉冲响应核和逐像素浮点累加顺序，用有界条带/行环替代整幅差值浮点图；光学辅助前缀也按条带复用。这些实现不改变模型/LUT、现有输出尺寸策略或 HDR 精度，不承诺完整虚化在任意设备都有同样收益。
 
 DepthStageView 与 SpaceCamera、SpaceMesh、SpaceParallax 管理空间视图。SpaceFullscreen 临时复用同一视图而不复制照片、不启动新推理；SpaceGyro 仅在启用且前台有焦点时提供姿态，关闭/暂停时解除驱动。空间预览不改变导出成片。
 
@@ -58,4 +62,4 @@ PureLut.kt 提供无 Android 依赖的通用三线性查表：PLUT0001、big-end
 
 verifyLeicaMath 运行不依赖 Android 设备的 JUnit 测试。我随源码提供的 leica 测试数据由程序生成，沿用旧文件名仅为兼容测试引用；其中 expected 图不是神经网络推理结果。其余历史数值夹具原样保留。
 
-这个源码版本的 1302 项 JVM 测试已通过，覆盖数值算法、冷暖模式、尺寸和参数状态、SDR 导出策略、HDR 数学和发布边界、空间相机/网格以及检查点提交/损坏处理。原有合成夹具未替换，随附冷暖模型和哈希不变，本轮没有重新导出模型。Debug、未签名 Release、AndroidTest APK 已构建；AndroidTest 只完成编译打包，没有在设备运行。Android 界面、实际编解码/相册发布、显示、真实进程恢复、陀螺仪、峰值内存与耗时仍需另行验收。
+本次 2.5.2 同步保留原测试及合成夹具，并加入融合/光学、流式 HDR、重建等价、取消/清理和主体恢复用例，测试中的来源和蒙版由程序确定性构造，不带真实照片。按要求没有运行这些用例、构建或设备测试，静态代码同步核对不能证明公开树通过回归。2.5.1 的 1302 项 JVM 通过及 Debug、未签名 Release、AndroidTest 构建仅为历史结果，不适用于本次源码树。冷暖模型和哈希不变，没有重新导出模型。Android 界面、实际编解码/相册发布、HDR 显示、多点页面返回/进程恢复、陀螺仪、峰值内存与全链路耗时仍需另行验收。

@@ -11,15 +11,26 @@ class SubjectPointCache(private val load:((Point)->Frame?)?=null, private val sa
     private val completed=linkedMapOf<Point,Frame>()
     private var unionKey:List<Point>?=null
     private var unionValue:Frame?=null
+    private var identity:String?=null
+    private var selected:Set<Point> = emptySet()
+    /** Only explicit selection changes prune the cache. A cache-only UI read must never select. */
+    fun select(photo:String,points:List<Point>,identity:String){
+        if(this.photo!=photo || this.identity!=identity)clear()
+        this.photo=photo;this.identity=identity;selected=points.toSet()
+        retain(points);hydrate(photo,points)
+    }
+    fun matches(photo:String,points:List<Point>,identity:String)=this.photo==photo && this.identity==identity && selected==points.toSet()
+    fun selectionIdentity(photo:String,points:List<Point>):String? = identity?.takeIf{this.photo==photo && selected==points.toSet()}
     fun retain(points:List<Point>){completed.keys.retainAll(points.toSet());unionKey=null;unionValue=null}
     fun hydrate(photo:String,points:List<Point>){
         if(this.photo!=photo){clear();this.photo=photo}
         points.forEach{point->if(point !in completed)load?.invoke(point)?.let{alpha->
             require(alpha.channels==1 && alpha.data.all{it.isFinite() && it in 0f..1f});SubjectSelectionMath.requireCovered(alpha,listOf(point))
+            completed.values.firstOrNull()?.let{require(it.w==alpha.w && it.h==alpha.h){"主体蒙版尺寸不一致"}}
             completed[point]=alpha;unionKey=null;unionValue=null
         }}
     }
-    fun clear(){photo=null;completed.clear();unionKey=null;unionValue=null}
+    fun clear(){photo=null;identity=null;selected=emptySet();completed.clear();unionKey=null;unionValue=null}
     fun completed(photo:String,points:List<Point>):List<Point> = if(this.photo!=photo)emptyList() else points.distinct().filter{it in completed}
     fun contains(photo:String,points:List<Point>)=points.isNotEmpty() && completed(photo,points).size==points.distinct().size
     fun cached(photo:String,points:List<Point>,cancel:Cancel):Frame? {

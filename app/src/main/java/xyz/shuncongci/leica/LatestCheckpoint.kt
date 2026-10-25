@@ -48,6 +48,12 @@ class LatestCheckpoint(val directory:File, private val fault:(String)->Unit = {}
     fun update(meta:Map<String,String> = emptyMap(),remove:Set<String> = emptySet(),blobs:Map<String,(File)->Unit> = emptyMap()) = synchronized(lock){
         healthy();commit(Properties().also{it.putAll(values)},meta,remove,blobs)
     }
+    /** Compare and commit under the same per-directory lock; stale workers cannot settle a newer job. */
+    fun updateIf(expected:Map<String,String>,meta:Map<String,String>):Boolean = synchronized(lock){
+        healthy()
+        if(expected.any{(k,v)->values.getProperty(k)!=v})return@synchronized false
+        commit(Properties().also{it.putAll(values)},meta,emptySet(),emptyMap());true
+    }
     /** A new import is the only path that may replace an unreadable old manifest. */
     fun reset(meta:Map<String,String>,blobs:Map<String,(File)->Unit>)=synchronized(lock){
         reload();commit(Properties(),meta,emptySet(),blobs)
@@ -111,13 +117,13 @@ object CheckpointPixels {
     fun frame(file:File,p:LegendaryMath.Frame,cancel:Cancel){
         DataOutputStream(file.outputStream().buffered()).use{out->
             out.writeInt(MAGIC);out.writeInt(p.w);out.writeInt(p.h);out.writeInt(p.channels)
-            for(i in p.data.indices){if(i and 16383==0)cancel.check();require(p.data[i].isFinite());out.writeInt(p.data[i].toRawBits())}
+            FloatBlocks.write(out,p.data,cancel)
         }
     }
     fun frame(file:File,cancel:Cancel):LegendaryMath.Frame=DataInputStream(file.inputStream().buffered()).use{input->
         require(input.readInt()==MAGIC);val w=input.readInt();val h=input.readInt();val c=input.readInt()
         val n=w.toLong()*h*c;require(w>0 && h>0 && c in 1..4 && n in 1..Int.MAX_VALUE.toLong() && 16+n*4==file.length()){"恢复浮点图像长度不正确"}
-        LegendaryMath.Frame(w,h,c,FloatArray(n.toInt()){i->if(i and 16383==0)cancel.check();Float.fromBits(input.readInt()).also{require(it.isFinite())}})
+        LegendaryMath.Frame(w,h,c,FloatArray(n.toInt()).also{FloatBlocks.read(input,it,cancel)})
     }
 }
 

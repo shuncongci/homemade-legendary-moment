@@ -66,27 +66,52 @@ object Lab {
         return if (x <= 0.0031308) 12.92 * x else 1.055 * x.pow(1.0 / 2.4) - 0.055
     }
 
+    // The Lab inputs are discrete bytes. Cache their EXACT old double expressions, not a sampled 3D LUT.
+    private val yOfL=DoubleArray(256){l8->
+        val l=l8*100.0/255.0
+        if(l<=8.0)l/903.3 else {val fy=(l+16.0)/116.0;fy*fy*fy}
+    }
+    private val fyOfL=DoubleArray(256){l8->
+        val l=l8*100.0/255.0
+        if(l<=8.0)7.787*yOfL[l8]+16.0/116.0 else (l+16.0)/116.0
+    }
+    private val xOfLA=DoubleArray(65536){at->
+        val fx=((at and 255)-128.0)/500.0+fyOfL[at ushr 8]
+        (if(fx*fx*fx>0.008856)fx*fx*fx else (fx-16.0/116.0)/7.787)*0.950456
+    }
+    private val zOfLB=DoubleArray(65536){at->
+        val fz=fyOfL[at ushr 8]-((at and 255)-128.0)/200.0
+        (if(fz*fz*fz>0.008856)fz*fz*fz else (fz-16.0/116.0)/7.787)*1.088754
+    }
+    // Locate the FIRST representable double mapped above each byte by the original gamma+rint.
+    // Searching these 255 exact decision boundaries removes pow(), with no gamma approximation.
+    private val gammaCuts=DoubleArray(255){low->
+        val encoded=(low+.5)/255.0
+        var value=if(encoded<=.04045)encoded/12.92 else ((encoded+.055)/1.055).pow(2.4)
+        fun code(v:Double)=Math.rint(gamma(v)*255.0).toInt()
+        while(code(value)<=low)value=Math.nextUp(value)
+        while(code(Math.nextDown(value))>low)value=Math.nextDown(value)
+        value
+    }
+    private fun gammaByte(v:Double):Byte {
+        var lo=0;var hi=255
+        while(lo<hi){val mid=(lo+hi) ushr 1;if(v>=gammaCuts[mid])lo=mid+1 else hi=mid}
+        return lo.toByte()
+    }
     fun labToRgbInPlace(p: Planes, cancel: Cancel? = null) {
-        val w = p.width
-        parallelFor(p.height) { y ->
-            if (y and 63 == 0) cancel?.check()
-            for (i in y * w until (y + 1) * w) {
-                val l = (p.p0[i].toInt() and 0xFF) * 100.0 / 255.0
-                val a = (p.p1[i].toInt() and 0xFF) - 128.0
-                val b = (p.p2[i].toInt() and 0xFF) - 128.0
-                val yy: Double
-                val fy: Double
-                if (l <= 8.0) { yy = l / 903.3; fy = 7.787 * yy + 16.0 / 116.0 } else { fy = (l + 16.0) / 116.0; yy = fy * fy * fy }
-                val fx = a / 500.0 + fy
-                val fz = fy - b / 200.0
-                val x = (if (fx * fx * fx > 0.008856) fx * fx * fx else (fx - 16.0 / 116.0) / 7.787) * 0.950456
-                val z = (if (fz * fz * fz > 0.008856) fz * fz * fz else (fz - 16.0 / 116.0) / 7.787) * 1.088754
-                p.p0[i] = sat(gamma(3.240479 * x - 1.53715 * yy - 0.498535 * z) * 255.0)
-                p.p1[i] = sat(gamma(-0.969256 * x + 1.875991 * yy + 0.041556 * z) * 255.0)
-                p.p2[i] = sat(gamma(0.055648 * x - 0.204043 * yy + 1.057311 * z) * 255.0)
+        val w=p.width
+        parallelFor(p.height){y->
+            if(y and 63==0)cancel?.check()
+            for(i in y*w until (y+1)*w){
+                val l=p.p0[i].toInt()and 255;val a=p.p1[i].toInt()and 255;val b=p.p2[i].toInt()and 255
+                val yy=yOfL[l];val x=xOfLA[(l shl 8)or a];val z=zOfLB[(l shl 8)or b]
+                p.p0[i]=gammaByte(3.240479*x-1.53715*yy-0.498535*z)
+                p.p1[i]=gammaByte(-0.969256*x+1.875991*yy+0.041556*z)
+                p.p2[i]=gammaByte(0.055648*x-0.204043*yy+1.057311*z)
             }
         }
     }
+
 }
 
 /** cv2.GaussianBlur(src32f, (0,0), sigma): ksize = round(sigma*8+1)|1, BORDER_REFLECT_101, separable. */
@@ -157,20 +182,8 @@ object Fusion {
         val h = orig.height
         Lab.rgbToLabInPlace(orig, cancel)
         Lab.rgbToLabInPlace(gan, cancel)
-        val diff = FloatArray(orig.size)
         for (c in 0 until 3) {
-            val o = orig.plane(c)
-            val g = gan.plane(c)
-            parallelFor(h) { y ->
-                for (i in y * w until (y + 1) * w) diff[i] = ((g[i].toInt() and 0xFF) - (o[i].toInt() and 0xFF)).toFloat()
-            }
-            Gaussian.blur(diff, w, h, if (c == 0) SIGMA_L else SIGMA_AB, cancel)
-            parallelFor(h) { y ->
-                for (i in y * w until (y + 1) * w) {
-                    val v = (o[i].toInt() and 0xFF) + diff[i]
-                    o[i] = (if (v <= 0f) 0 else if (v >= 255f) 255 else v.toInt()).toByte()
-                }
-            }
+            FusionFir.channel(orig.plane(c),gan.plane(c),w,h,if(c==0)SIGMA_L else SIGMA_AB,cancel)
         }
         Lab.labToRgbInPlace(orig, cancel)
         return orig

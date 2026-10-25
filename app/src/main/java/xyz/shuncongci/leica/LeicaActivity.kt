@@ -352,7 +352,7 @@ class LeicaActivity:AppCompatActivity() {
         subjectSelectButton.isSelected=flow.subjectPicking;subjectSelectButton.text=if(flow.subjectPicking)"结束选点（${flow.subjectPoints.size}）" else "选择保护点（${flow.subjectPoints.size}）"
         val subjectTicket=flow.subjectTicket();val subjectQueued=subjectWork.needs(subjectTicket)
         subjectComputeButton.isEnabled=flow.canComputeSubjects && !subjectQueued && (!flow.subjectReady || !subjectWork.isPresented(subjectTicket))
-        subjectComputeButton.text=when{flow.focus==null->"先选一个焦点";subjectQueued->"计算中 · ${flow.subjectCompletedCount}/${flow.subjectPoints.size}点";flow.subjectReady && !subjectWork.isPresented(subjectTicket)->"应用已算结果";flow.subjectReady->"已完成 ${flow.subjectCompletedCount}/${flow.subjectPoints.size}点";flow.subjectCompletedCount>0->"计算新增/待算 ${flow.subjectPendingCount}点";else->"统一计算"}
+        subjectComputeButton.text=when{flow.focus==null->"先选一个焦点";subjectQueued && flow.subjectReady->"保护已算完 · 正在应用";subjectQueued->"计算中 · ${flow.subjectCompletedCount}/${flow.subjectPoints.size}点";flow.subjectReady && !subjectWork.isPresented(subjectTicket)->"应用已算结果";flow.subjectReady->"已完成 ${flow.subjectCompletedCount}/${flow.subjectPoints.size}点";flow.subjectCompletedCount>0->"计算新增/待算 ${flow.subjectPendingCount}点";else->"统一计算"}
         subjectResolutionButton.isEnabled=!flow.busy
         subjectResolutionButton.text="保护分辨率 · 长边 ${flow.subjectResolution.longEdge}"
         resumeButton.visibility=if(interruptedKind.isNotEmpty() && !flow.busy)View.VISIBLE else View.GONE
@@ -475,7 +475,11 @@ class LeicaActivity:AppCompatActivity() {
         subjectWork.invalidate();previewUpdates.discard();stageView.clearSubject()
         if(flow.subjectCompletedCount==0)compare.subjectOverlay=null
         status.text="已选${flow.subjectPoints.size}点，已完成${flow.subjectCompletedCount}点；新增或移动只计算缺失点，移除不运行模型。可拖动蓝色编号调整位置。"+if(flow.focus==null)"请先另选一个景深焦点。" else ""
-        viewer=Viewer.ORIGINAL;applyViewer();refresh();refreshCachedSubjects()
+        viewer=Viewer.ORIGINAL;applyViewer();refresh()
+        val uri=photo?:return;val points=flow.subjectPoints.toList();val focus=flow.focus;val resolution=flow.subjectResolution
+        // Selection is an explicit ordered mutation; asynchronous presentation reads below are read-only.
+        worker.execute{engine.selectSubjects(uri,points,focus,resolution)}
+        refreshCachedSubjects()
     }
     /** Selection edits only merge existing alpha; no decode, depth or subject model call. */
     private fun refreshCachedSubjects(){
@@ -484,14 +488,14 @@ class LeicaActivity:AppCompatActivity() {
         lifecycleScope.launch{
             try{
                 val state=withContext(dispatcher){
-                    engine.selectSubjects(uri,ticket.points,focus,resolution)
+                    if(!engine.subjectSelectionMatches(uri,ticket.points,focus,resolution))return@withContext null
                     val done=engine.completedSubjects(uri,ticket.points)
                     val alpha=engine.cachedSubjects(uri,ticket.points,Cancel())
                     // A 3D allocation/presentation failure must not discard completion or the blue mask.
                     val motion=try{engine.cachedSubjectMotion(uri,ticket.points,focus,Cancel())}catch(e:Exception){propagateFatalCause(e);null}
                     Triple(done,alpha?.let{SubjectProtectionMath.overlay(it,w,h,Cancel())},motion)
                 }
-                if(photo==uri && flow.subjectTicket()==ticket && subjectWork.acceptsRead(readEpoch) && !flow.busy && flow.subjectEnabled && !isDestroyed){
+                if(state!=null && photo==uri && flow.subjectTicket()==ticket && subjectWork.acceptsRead(readEpoch) && !flow.busy && flow.subjectEnabled && !isDestroyed){
                     val overlay=state.second?.let{Bitmap.createBitmap(it,w,h,Bitmap.Config.ARGB_8888)}
                     flow.acceptSubjectCompletion(ticket,state.first)
                     compare.subjectOverlay=overlay
@@ -551,7 +555,7 @@ class LeicaActivity:AppCompatActivity() {
                 };break
             }}finally{
                 // Actual cache commits survive later presentation errors. Never consume a request here.
-                val done=withContext(NonCancellable+dispatcher){engine.completedSubjects(uri,selectedPoints).also{if(it.toSet()==selectedPoints.toSet() && session.store.get("job.kind")=="subject")session.job("")}}
+                val done=withContext(NonCancellable+dispatcher){engine.completedSubjects(uri,selectedPoints)}
                 interruptedKind=withContext(NonCancellable+dispatcher){session.store.get("job.kind").orEmpty()}
                 if(photo==uri && flow.acceptSubjectCompletion(subjectTicket,done))subjectWork.changed()
             }

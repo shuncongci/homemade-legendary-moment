@@ -8,7 +8,16 @@ object HdrMath {
     const val EPSILON=1f/64f
     fun linear(v:Float):Float = if(v<=.04045f)v/12.92f else ((v+.055f)/1.055f).pow(2.4f)
     fun srgb(v:Float):Float = if(v<=.0031308f)12.92f*max(v,0f) else 1.055f*max(v,0f).pow(1/2.4f)-.055f
-    fun linear(p:Planes)=Frame(p.width,p.height,3,FloatArray(p.size*3){i->linear((p.plane(i/p.size)[i%p.size].toInt() and 255)/255f)})
+    private val byteLinear=FloatArray(256){linear(it/255f)}
+    internal fun linearByte(v:Int):Float=byteLinear[v]
+    internal fun transfer(source:Float,hdr:Float,target:Float):Float =
+        max(0f,(hdr+EPSILON)*(target+EPSILON)/(source+EPSILON)-EPSILON)
+    fun linear(p:Planes):Frame {
+        val f=Frame(p.width,p.height,3,FloatArray(p.size*3))
+        for(c in 0..2){val plane=p.plane(c);val offset=c*p.size
+            for(i in plane.indices)f.data[offset+i]=byteLinear[plane[i].toInt()and 255]}
+        return f
+    }
     fun checked(f:Frame):Frame {
         require(f.channels==3 && f.data.all{it.isFinite() && it>=0f && it<=65504f}){"HDR线性像素无效或超出安全范围，未截断/降SDR"};return f
     }
@@ -35,7 +44,7 @@ object HdrMath {
         require(sourceSdr.data!==sourceHdr.data){"HDR原地调色需要独立的源SDR与HDR"}
         checked(sourceSdr);checked(sourceHdr)
         for(i in sourceHdr.data.indices){if(i%colored.width==0)cancel.check()
-            val target=linear((colored.plane(i/colored.size)[i%colored.size].toInt()and 255)/255f)
+            val target=linearByte(colored.plane(i/colored.size)[i%colored.size].toInt()and 255)
             sourceHdr.data[i]=max(0f,(sourceHdr.data[i]+EPSILON)*(target+EPSILON)/(sourceSdr.data[i]+EPSILON)-EPSILON)
         };return checked(sourceHdr)
     }
@@ -61,23 +70,75 @@ object HdrMath {
         };return checked(out)
     }
     data class Map(val w:Int,val h:Int,val pixels:IntArray,val minimum:Float,val maximum:Float,val display:Float)
+    /** Compatibility wrapper for numeric tools. Production uses bounded rows, never a full IntArray. */
     fun encode(base:Planes,hdr:Frame,cancel:Cancel):Map {
-        checked(hdr);require(hdr.w==base.width && hdr.h==base.height)
+        val pixels=IntArray(base.size)
+        val metadata=encodeRows(base,hdr,cancel){y,rows,values->System.arraycopy(values,0,pixels,y*base.width,rows*base.width)}
+        return metadata.copy(pixels=pixels)
+    }
+    /** pixels is intentionally empty in the metadata-only return. Borrowed rows valid only during callback. */
+    internal fun encodeRows(base:Planes,hdr:Frame,cancel:Cancel,write:(Int,Int,IntArray)->Unit):Map {
+        cancel.check();checked(hdr);require(hdr.w==base.width && hdr.h==base.height)
+        val workers=min(4,min(base.height,Runtime.getRuntime().availableProcessors().coerceAtLeast(1)))
+        val lows=FloatArray(workers);val highs=FloatArray(workers){1e-6f};val peaks=FloatArray(workers){1.0001f}
+        parallelFor(workers){worker->
+            var lo=0f;var hi=1e-6f;var peak=1.0001f
+            for(c in 0..2){val p=base.plane(c);val offset=c*base.size
+                for(y in worker until base.height step workers){cancel.check()
+                    for(i in y*base.width until (y+1)*base.width){
+                        val s=byteLinear[p[i].toInt()and 255];val h=hdr.data[offset+i]
+                        val v=ln((h+EPSILON)/(s+EPSILON));lo=min(lo,v);hi=max(hi,v);peak=max(peak,h)
+                    }
+                }
+            };lows[worker]=lo;highs[worker]=hi;peaks[worker]=peak
+        }
+        val lo=lows.minOrNull()!!;val hi=highs.maxOrNull()!!;val peak=peaks.maxOrNull()!!
+        val block=min(16,base.height);val pixels=IntArray(base.width*block)
+        for(y in 0 until base.height step block){cancel.check();val rows=min(block,base.height-y);val count=rows*base.width
+            pixels.fill(0xff000000.toInt(),0,count)
+            for(c in 0..2){val p=base.plane(c);val offset=c*base.size+y*base.width;val start=y*base.width;val shift=16-c*8
+                for(i in 0 until count){
+                    val s=byteLinear[p[start+i].toInt()and 255]
+                    val value=ln((hdr.data[offset+i]+EPSILON)/(s+EPSILON))
+                    val v=((value-lo)/(hi-lo)*255).roundToInt().coerceIn(0,255)
+                    pixels[i]=pixels[i]or(v shl shift)
+                }
+            }
+            write(y,rows,pixels)
+        }
+        cancel.check();return Map(base.width,base.height,IntArray(0),exp(lo),exp(hi),max(peak,exp(hi)))
+    }
+    /** Two identical scalar log-ratio passes over immutable rows. No decoded RGB8 Planes or 12N FloatArray.
+     * readBase supplies the JPEG-decoded ARGB bytes, never the pre-JPEG SDR input. */
+    internal fun encodePixelRows(hdr:HdrPixels,cancel:Cancel,readBase:(Int,Int,IntArray)->Unit,
+                                write:(Int,Int,IntArray)->Unit):Map {
+        cancel.check();HdrPixels.dimensions(hdr.w,hdr.h)
+        val block=min(16,hdr.h);val width=hdr.w
+        require(width<=Int.MAX_VALUE/block)
+        val base=IntArray(width*block);val values=FloatArray(base.size);val pixels=IntArray(base.size)
         var lo=0f;var hi=1e-6f;var peak=1.0001f
-
-        for(c in 0..2)for(i in 0 until base.size){if(i%base.width==0)cancel.check();val at=c*base.size+i
-            val s=linear((base.plane(c)[i].toInt() and 255)/255f);val h=hdr.data[at]
-            val v=ln((h+EPSILON)/(s+EPSILON));lo=min(lo,v);hi=max(hi,v);peak=max(peak,h)
+        for(y in 0 until hdr.h step block){cancel.check();val rows=min(block,hdr.h-y);val count=rows*width
+            readBase(y,rows,base)
+            for(c in 0..2){hdr.read(c,y,rows,values,cancel);val shift=16-c*8
+                for(i in 0 until count){val h=values[i];HdrPixels.valid(h)
+                    val s=byteLinear[(base[i] ushr shift)and 255]
+                    val v=ln((h+EPSILON)/(s+EPSILON));lo=min(lo,v);hi=max(hi,v);peak=max(peak,h)
+                }
+            }
         }
-        val pixels=IntArray(base.size){i->
-            if(i%base.width==0)cancel.check()
-            var p=0xff000000.toInt();for(c in 0..2){
-                val s=linear((base.plane(c)[i].toInt()and 255)/255f)
-                val value=ln((hdr.data[c*base.size+i]+EPSILON)/(s+EPSILON))
-                val v=((value-lo)/(hi-lo)*255).roundToInt().coerceIn(0,255);p=p or(v shl(16-c*8))
-            };p
+        for(y in 0 until hdr.h step block){cancel.check();val rows=min(block,hdr.h-y);val count=rows*width
+            readBase(y,rows,base);pixels.fill(0xff000000.toInt(),0,count)
+            for(c in 0..2){hdr.read(c,y,rows,values,cancel);val shift=16-c*8
+                for(i in 0 until count){val h=values[i];HdrPixels.valid(h)
+                    val s=byteLinear[(base[i] ushr shift)and 255]
+                    val value=ln((h+EPSILON)/(s+EPSILON))
+                    val v=((value-lo)/(hi-lo)*255).roundToInt().coerceIn(0,255)
+                    pixels[i]=pixels[i]or(v shl shift)
+                }
+            }
+            cancel.check();write(y,rows,pixels)
         }
-        return Map(base.width,base.height,pixels,exp(lo),exp(hi),max(peak,exp(hi)))
+        cancel.check();return Map(width,hdr.h,IntArray(0),exp(lo),exp(hi),max(peak,exp(hi)))
     }
     fun reconstruct(base:Planes,map:Map,cancel:Cancel):Frame {
         require(base.width==map.w && base.height==map.h && map.pixels.size==base.size)

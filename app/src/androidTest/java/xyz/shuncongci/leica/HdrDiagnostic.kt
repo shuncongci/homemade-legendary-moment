@@ -74,13 +74,15 @@ object HdrDiagnostic {
                 val sdr=LegendaryMath.planes(encoded)
                 for(i in 0 until sdr.size){sdr.p0[i]=((sdr.p0[i].toInt()and 255)*.9f).toInt().toByte()}
                 val hdr=HdrMath.color(source.sdr,source.hdr,sdr,Cancel())
+                val fused=HdrSource.bitmapForColor(decoded,exif,pw,ph,sdr,Cancel(),context.cacheDir)
+                for(i in hdr.data.indices)check(hdr.data[i].toRawBits()==fused.data[i].toRawBits()){"Fused HDR decode/transfer differs at EXIF=$exif pixel=$i"}
                 val region=CompositionGeometry.Crop(.125,.125,.875,.875)
                 val box=CompositionGeometry.pixels(region,pw,ph)
                 val pair=HdrPairExport.crop(sdr,hdr,region,maxOf(1,box.w/2) to maxOf(1,box.h/2),Cancel())
                 val file=File(dir,"production-pair-exif-$exif.jpg")
                 val expected=HdrPairExport.encode(file,pair.first,pair.second,Cancel())
                 val error=HdrPairExport.verify(context,android.net.Uri.fromFile(file),expected,pair.second,Cancel())
-                pairCases.put(JSONObject().put("exif",exif).put("maximumRelativeToPeak",error.maxRelativeToPeak).put("rmseRelativeToPeak",error.rmseRelativeToPeak).put("accepted",true))
+                pairCases.put(JSONObject().put("exif",exif).put("fusedDecodeBitExact",true).put("maximumRelativeToPeak",error.maxRelativeToPeak).put("rmseRelativeToPeak",error.rmseRelativeToPeak).put("accepted",true))
             }}finally{decoded.recycle()}
             report.put("productionGeometry",geometryCases).put("productionGeometryExecuted",true).put("productionPairCodec",pairCases).put("productionPairMathExecuted",true).put("mediaStoreExecuted",false)
             report.put("status","PASS_CODEC_AND_PAIR_NUMERIC_ONLY")

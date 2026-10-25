@@ -7,7 +7,10 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.provider.MediaStore
 import androidx.annotation.RequiresApi
-import java.io.ByteArrayOutputStream
+import java.io.BufferedOutputStream
+import java.io.FileOutputStream
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.io.File
 import java.util.UUID
 import xyz.shuncongci.leica.LegendaryMath.Frame
@@ -18,35 +21,56 @@ object HdrPairExport {
         val result=Planes(bitmap.width,bitmap.height);val row=IntArray(bitmap.width)
         for(y in 0 until bitmap.height){bitmap.getPixels(row,0,bitmap.width,0,y,bitmap.width,1);result.setFromArgbRows(y,1,row)};return result
     }
-    private fun jpeg(p:Planes,quality:Int):ByteArray {
-        val b=Bitmap.createBitmap(p.width,p.height,Bitmap.Config.ARGB_8888)
-        try{b.setHasAlpha(false);val row=IntArray(p.width);for(y in 0 until p.height){p.toArgbRows(y,1,row);b.setPixels(row,0,p.width,0,y,p.width,1)}
-            val bytes=ByteArrayOutputStream();check(b.compress(Bitmap.CompressFormat.JPEG,quality,bytes));return bytes.toByteArray()
+    private fun jpeg(p:Planes,quality:Int,file:File,cancel:Cancel) {
+        cancel.check();val b=Bitmap.createBitmap(p.width,p.height,Bitmap.Config.ARGB_8888)
+        try{b.setHasAlpha(false);val row=IntArray(p.width);for(y in 0 until p.height){cancel.check();p.toArgbRows(y,1,row);b.setPixels(row,0,p.width,0,y,p.width,1)}
+            file.outputStream().buffered(65536).use{check(b.compress(Bitmap.CompressFormat.JPEG,quality,it))};cancel.check()
         }finally{b.recycle()}
     }
     /** Uses existing SDR area policy and the identical rounded crop coordinates for float HDR area integration. */
-    fun crop(sdr:Planes,hdr:Frame,crop:CompositionGeometry.Crop,size:Pair<Int,Int>,cancel:Cancel):Pair<Planes,Frame> {
+    fun crop(sdr:Planes,hdr:Frame,crop:CompositionGeometry.Crop,size:Pair<Int,Int>,cancel:Cancel):Pair<Planes,Frame> =
+        cropSdr(sdr,crop,size,cancel) to HdrMath.geometry(hdr,crop,size.first,size.second,cancel)
+    private fun cropSdr(sdr:Planes,crop:CompositionGeometry.Crop,size:Pair<Int,Int>,cancel:Cancel):Planes {
+        if(crop==CompositionGeometry.FULL && size==(sdr.width to sdr.height)){cancel.check();return sdr}
         val target=Planes(size.first,size.second)
         CompositionExport.rows(sdr.width,sdr.height,crop,size.first,size.second,cancel,read={box->
             IntArray(box.w*box.h){i->val at=(box.top+i/box.w)*sdr.width+box.left+i%box.w
                 0xff000000.toInt()or((sdr.p0[at].toInt()and 255)shl 16)or((sdr.p1[at].toInt()and 255)shl 8)or(sdr.p2[at].toInt()and 255)}
         }){y,p,offset->target.setFromArgbRows(y,1,if(offset==0)p else p.copyOfRange(offset,offset+size.first))}
-        return target to HdrMath.geometry(hdr,crop,size.first,size.second,cancel)
+        return target
     }
     /** Gain is derived against the JPEG-decoded SDR bytes, not the uncompressed image. */
-    internal fun encode(target:File,sdr:Planes,hdr:Frame,cancel:Cancel):HdrExportPolicy.Metadata {
-        cancel.check();val base=jpeg(sdr,95)
-        val decoded=checkNotNull(BitmapFactory.decodeByteArray(base,0,base.size))
-        val decodedBase=try{planes(decoded)}finally{decoded.recycle()}
-        val map=HdrMath.encode(decodedBase,hdr,cancel)
-        val gm=Bitmap.createBitmap(map.w,map.h,Bitmap.Config.ARGB_8888)
-        val gainBytes=try{
-            gm.setHasAlpha(false);gm.setPixels(map.pixels,0,map.w,0,0,map.w,map.h)
-            ByteArrayOutputStream().also{check(gm.compress(Bitmap.CompressFormat.JPEG,100,it))}.toByteArray()
-        }finally{gm.recycle()}
-        cancel.check();target.outputStream().use{UltraHdrContainer.write(it,base,gainBytes,map)}
-        return HdrExportPolicy.Metadata(sdr.width,sdr.height,map.w,map.h,
-            List(3){map.minimum}+List(3){map.maximum}+List(3){1f}+List(6){HdrMath.EPSILON}+listOf(1f,map.display))
+    internal fun encode(target:File,sdr:Planes,hdr:Frame,cancel:Cancel):HdrExportPolicy.Metadata =
+        encode(target,sdr,HdrPixels.of(hdr),cancel)
+    /** Compressed streams stay in private temporary files; decoded base is read in <=16-row strips.
+     * Base JPEG quality 95, gain JPEG quality 100, dimensions and exact log-ratio math are unchanged. */
+    internal fun encode(target:File,sdr:Planes,hdr:HdrPixels,cancel:Cancel):HdrExportPolicy.Metadata {
+        cancel.check();require(hdr.w==sdr.width && hdr.h==sdr.height)
+        val directory=checkNotNull(target.parentFile);val temporary=ArrayList<File>()
+        fun temp(prefix:String)=File.createTempFile(prefix,".tmp",directory).also{temporary.add(it)}
+        try {
+            val base=temp("hdr-base-");val gain=temp("hdr-gain-");val part=temp("hdr-encode-")
+            jpeg(sdr,95,base,cancel)
+            val decoded=checkNotNull(BitmapFactory.decodeFile(base.path,BitmapFactory.Options().apply{inPreferredConfig=Bitmap.Config.ARGB_8888;inSampleSize=1}))
+            val map=try{
+                check(decoded.width==sdr.width && decoded.height==sdr.height)
+                val gm=Bitmap.createBitmap(sdr.width,sdr.height,Bitmap.Config.ARGB_8888)
+                try {
+                    gm.setHasAlpha(false)
+                    val made=HdrMath.encodePixelRows(hdr,cancel,
+                        readBase={y,rows,pixels->decoded.getPixels(pixels,0,sdr.width,0,y,sdr.width,rows)},
+                        write={y,rows,pixels->gm.setPixels(pixels,0,sdr.width,0,y,sdr.width,rows)})
+                    cancel.check();gain.outputStream().buffered(65536).use{check(gm.compress(Bitmap.CompressFormat.JPEG,100,it))}
+                    made
+                }finally{gm.recycle()}
+            }finally{decoded.recycle()}
+            cancel.check();FileOutputStream(part).use{raw->
+                val out=BufferedOutputStream(raw,65536);UltraHdrContainer.write(out,base,gain,map,cancel);out.flush();raw.fd.sync()
+            }
+            cancel.check();Files.move(part.toPath(),target.toPath(),StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING)
+            return HdrExportPolicy.Metadata(sdr.width,sdr.height,map.w,map.h,
+                List(3){map.minimum}+List(3){map.maximum}+List(3){1f}+List(6){HdrMath.EPSILON}+listOf(1f,map.display))
+        }finally{temporary.forEach{it.delete()}}
     }
     internal fun verify(context:Context,uri:Uri,expected:HdrExportPolicy.Metadata,target:Frame,cancel:Cancel):HdrMath.Error {
         HdrPhotoExport34.verify(context,uri,expected,cancel)
@@ -56,11 +80,14 @@ object HdrPairExport {
             val error=HdrMath.error(target,actual);HdrMath.accept(error);return error
         }finally{decoded.recycle()}
     }
-    fun save(context:Context,sdr:Planes,hdr:Frame,crop:CompositionGeometry.Crop,size:Pair<Int,Int>,cancel:Cancel):String {
+    fun save(context:Context,sdr:Planes,hdr:Frame,crop:CompositionGeometry.Crop,size:Pair<Int,Int>,cancel:Cancel):String =
+        save(context,sdr,HdrPixels.of(hdr),crop,size,cancel)
+    internal fun save(context:Context,sdr:Planes,hdr:HdrPixels,crop:CompositionGeometry.Crop,size:Pair<Int,Int>,cancel:Cancel):String {
         val temp=File.createTempFile("hdr-pair-",".jpg",context.cacheDir)
         try{
             try{
-                val (base,target)=crop(sdr,hdr,crop,size,cancel)
+                val base=cropSdr(sdr,crop,size,cancel)
+                val target=HdrPixelGeometry.crop(hdr,crop,size.first,size.second)
                 encode(temp,base,target,cancel)
             }catch(t:Throwable){if(!HdrAutoPolicy.canFallback(t))throw t;cancel.check();throw HdrUnsupportedException(t)}
             return publish(context,temp,cancel)

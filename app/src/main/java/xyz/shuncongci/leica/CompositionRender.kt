@@ -18,15 +18,18 @@ object CompositionRender {
             LeicaEngine(context,resultDirectory=directory).use{engine->
                 engineChanged(engine)
                 cancel.check()
-                var pair:Pair<Planes,LegendaryMath.Frame>?=null
+                var pair:Pair<Planes,File>?=null
                 rendered=engine.process(Uri.fromFile(original),appearance.style,cancel,appearance.blur,appearance.focus,
                     appearance.aperture,output,appearance.color,plan.workWidth to plan.workHeight,
-                    hdrOutput=if(keepHdr)({sdr,hdr->pair=sdr to hdr})else null){progress(it)}
+                    hdrRowsOutput=if(keepHdr)({sdr,hdr->
+                        val snapshot=File(directory,"composition.hdr-float")
+                        HdrFloatFile.write(snapshot,hdr,cancel);pair=sdr to snapshot
+                    })else null){progress(it)}
                 val result=checkNotNull(rendered)
                 check(!appearance.blur || result.rendered){"该焦点无法生成虚化，请返回重新选焦"}
                 cancel.check()
                 progress("正在裁剪并保存")
-                if(keepHdr){val (sdr,hdr)=checkNotNull(pair);return HdrPairExport.save(context,sdr,hdr,plan.crop,plan.width to plan.height,cancel)}
+                if(keepHdr){val (sdr,file)=checkNotNull(pair);return HdrFloatFile.open(file).use{hdr->HdrPairExport.save(context,sdr,hdr,plan.crop,plan.width to plan.height,cancel)}}
                 return CompositionFiles.save(context,result.file,plan.crop,cancel,plan.width to plan.height,format)
             }
         }finally{

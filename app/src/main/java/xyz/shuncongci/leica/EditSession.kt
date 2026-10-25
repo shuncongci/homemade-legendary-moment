@@ -31,12 +31,20 @@ class EditSession(directory:File) {
         store.update(meta,blobs=mapOf(key to {f->CheckpointPixels.frame(f,value,cancel)}))
     fun subjectKey(point:Point)="subject.${point.x.toRawBits()}.${point.y.toRawBits()}"
     fun selectSubjects(points:List<Point>,resolution:Int,focus:Point?){
-        val identity="$resolution:${focus?.x?.toRawBits()}:${focus?.y?.toRawBits()}"
+        val identity=subjectIdentity(resolution,focus)
         val keys=points.map(::subjectKey).toSet()
         val obsolete=store.keys().filter{it.startsWith("subject.") && (store.get("subject.identity")!=identity || it !in keys)}.toSet()
-        store.update(mapOf("subject.identity" to identity),obsolete)
+        store.update(mapOf("subject.identity" to identity,"subject.points" to subjectPoints(points)),obsolete)
     }
-    fun clearSubjects(){store.update(remove=store.keys().filter{it.startsWith("subject.")}.toSet()+"subject.identity")}
+    /** Actual validated cache commits, not UI/presentation state, settle an interrupted subject job. */
+    fun finishSubjects(points:List<Point>,identity:String,completed:List<Point>):Boolean {
+        if(points.isEmpty() || completed.toSet()!=points.toSet())return false
+        return store.updateIf(mapOf("job.kind" to "subject","subject.identity" to identity,
+            "subject.points" to subjectPoints(points)),mapOf("job.kind" to ""))
+    }
+    fun clearSubjects(){store.update(remove=store.keys().filter{it.startsWith("subject.")}.toSet()+setOf("subject.identity","subject.points"))}
+    private fun subjectPoints(points:List<Point>)=points.map(::subjectKey).sorted().joinToString(";")
+    companion object { fun subjectIdentity(resolution:Int,focus:Point?)="$resolution:${focus?.x?.toRawBits()}:${focus?.y?.toRawBits()}" }
     fun renderCheckpoint()=object:MultiscaleCheckpoint {
         override fun load():MultiscaleCheckpoint.State? {
             val frame=frame("render.multiscale",Cancel())?:return null

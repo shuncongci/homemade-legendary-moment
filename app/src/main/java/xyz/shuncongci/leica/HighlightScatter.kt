@@ -98,7 +98,11 @@ object HighlightScatter {
             }
         }
         // Double row prefixes avoid cancelling tiny subpixel weights after long bright rows.
-        val maskP=DoubleArray(stride*h);val rP=DoubleArray(stride*h);val gP=DoubleArray(stride*h);val bP=DoubleArray(stride*h)
+        // A receiver band needs only its exact PSF halo. Source-row tags let adjacent bands
+        // retain prefixes instead of recomputing overlapping halos; float/double order is unchanged.
+        val band=256;val capacity=min(h,band+2*maxHalf)
+        val tags=IntArray(capacity){-1}
+        val maskP=DoubleArray(stride*capacity);val rP=DoubleArray(stride*capacity);val gP=DoubleArray(stride*capacity);val bP=DoubleArray(stride*capacity)
         val pmin=IntArray(h);val pmax=IntArray(h)
         val plans=HashMap<Int,Array<PsfRow>>()
         // Smooth partition-of-unity interpolation, not disjoint blocks. Only one radius of
@@ -114,10 +118,17 @@ object HighlightScatter {
             val levelPlans=if(field && level!=0)nodes.map{node->Plan(psfRows(OpticalPupil.kernel(abs(level),aperture,OpticalPupil.shape(node.x,node.y,w,h),cancel)),node)}
                 else listOf(Plan(plans.getOrPut(abs(level)){psfRows(LegendaryMath.kernel(abs(level),aperture))},null))
             val padded=w+2*half;val colOf=IntArray(padded){reflect(it-half,w)};val li=(level-minL)*h
-            parallelFor(h){sy->
+            tags.fill(-1)
+            for(y0 in 0 until h step band){
+            cancel.check();val y1=min(h,y0+band)
+            val source0=max(0,y0-half);val source1=min(h,y1+half)
+            parallelFor(source1-source0){rowIndex->
+                val sy=source0+rowIndex;val slot=sy%capacity
+                if(tags[slot]==sy)return@parallelFor
                 if(sy and 15==0)cancel.check()
+                tags[slot]=sy
                 if(!present[li+sy]){pmin[sy]=-1;return@parallelFor}
-                val base=sy*stride;val src=sy*w;var lo=-1;var hi=-1
+                val base=slot*stride;val src=sy*w;var lo=-1;var hi=-1
                 var m=0.0;var r=0.0;var g=0.0;var b=0.0
                 maskP[base]=0.0;rP[base]=0.0;gP[base]=0.0;bP[base]=0.0
                 for(p in 0 until padded){
@@ -127,7 +138,8 @@ object HighlightScatter {
                 }
                 pmin[sy]=lo;pmax[sy]=hi
             }
-            parallelFor(h){y->
+            parallelFor(y1-y0){rowIndex->
+                val y=y0+rowIndex
                 if(y and 7==0)cancel.check()
                 if(outLo[y]>outHi[y])return@parallelFor
                 val a=checkNotNull(acc.get());var touched=false
@@ -137,7 +149,7 @@ object HighlightScatter {
                     val sy=reflect(y+row.dy,h);if(!present[li+sy] || pmin[sy]<0)continue
                     val x0=max(outLo[y],max(node?.x0?:0,max(0,pmin[sy]-row.hi)));val x1=min(outHi[y],min(node?.x1?:(w-1),min(w-1,pmax[sy]-row.lo)));if(x0>x1)continue
                     if(!touched){java.util.Arrays.fill(a,0.0);touched=true}
-                    val base=sy*stride;val src=sy*w
+                    val base=(sy%capacity)*stride;val src=sy*w
                     if(row.a>=0)for(x in x0..x1){
                         val p0=base+x+row.a;val p1=base+x+row.b+1;val mass=maskP[p1]-maskP[p0]
                         if(mass<=0)continue
@@ -167,6 +179,7 @@ object HighlightScatter {
                     coverage[i]=(coverage[i]+take).coerceIn(0f,1f)
                 }
             }
+            } // receiver band (all readers joined before recycling prefix slots)
         }
         parallelFor(h){y->
             cancel.check()
