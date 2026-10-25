@@ -6,29 +6,68 @@ import android.graphics.BitmapFactory
 import android.graphics.BitmapRegionDecoder
 import android.graphics.Matrix
 import android.graphics.Rect
-import android.media.ExifInterface
 import android.net.Uri
+import java.io.IOException
 import java.io.InputStream
 import kotlin.math.max
 
-/** Viewport-only reader for 1:1 compare preview. Never used by migration or bokeh. */
-class RegionPhoto(context:Context,uri:Uri):AutoCloseable {
-    private val input:InputStream=context.contentResolver.openInputStream(uri) ?: error("无法读取用户原图")
-    @Suppress("DEPRECATION")
-    private val decoder=try { BitmapRegionDecoder.newInstance(input,false) ?: error("无法分块解码这张照片") } catch(e:Exception){input.close();throw IllegalArgumentException("此照片不支持原尺寸分块解码，请转为JPEG/PNG；不会降低分辨率保存",e)}
-    val orientation=context.contentResolver.openInputStream(uri)?.use { ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION,1) } ?: 1
-    val width=NativeImageMath.size(decoder.width,decoder.height,orientation).first
-    val height=NativeImageMath.size(decoder.width,decoder.height,orientation).second
+/** Original-pixel reader for compare and composition. Ordinary formats keep region decoding.
+ * Formats without a region codec use one checked full bitmap, released on close. No thumbnail fallback.
+ * Full decoding can require more memory; OOM is never retried at a lower resolution.
+ */
+class RegionPhoto(private val context:Context,private val uri:Uri):AutoCloseable {
+    private val info=PhotoPixels.inspect(context,uri)
+    private var input:InputStream?=null
+    private var decoder:BitmapRegionDecoder?=null
+    private var whole:Bitmap?=null
+    private var closed=false
+    val orientation=info.orientation
+    val width=info.displaySize.first
+    val height=info.displaySize.second
+    init {
+        // A DNG region decoder must not be allowed to choose a different embedded image.
+        if(info.dng==null){
+            val stream=context.contentResolver.openInputStream(uri)?:error("无法读取用户原图")
+            input=stream
+            try {
+                @Suppress("DEPRECATION")
+                val region=try{BitmapRegionDecoder.newInstance(stream,false)}catch(e:Exception){
+                    propagateFatalCause(e)
+                    if(e !is IOException && e !is IllegalArgumentException)throw e
+                    null
+                }
+                decoder=region
+                if(region!=null)PhotoPixelContract.decoded(info.width,info.height,1,region.width,region.height)
+                else {input=null;stream.close()}
+            }catch(t:Throwable){decoder?.recycle();decoder=null;input=null;stream.close();throw t}
+        }
+    }
+    private fun full():Bitmap=whole?:PhotoPixels.decode(context,uri,1,info).also{whole=it}
     private fun matrix()=Matrix().apply { when(orientation) {
         2->setScale(-1f,1f);3->setRotate(180f);4->setScale(1f,-1f)
         5->{setRotate(90f);postScale(-1f,1f)};6->setRotate(90f)
         7->{setRotate(-90f);postScale(-1f,1f)};8->setRotate(-90f)
     } }
     @Synchronized fun bitmap(b:NativeImageMath.Box,sample:Int=1):Bitmap {
-        val e=NativeImageMath.encodedBox(b,decoder.width,decoder.height,orientation)
-        val opts=BitmapFactory.Options().apply{inSampleSize=sample;inPreferredConfig=Bitmap.Config.ARGB_8888}
-        val bmp=decoder.decodeRegion(Rect(e.left,e.top,e.right,e.bottom),opts) ?: error("读取原图区域失败")
-        return if(orientation in 2..8)Bitmap.createBitmap(bmp,0,0,bmp.width,bmp.height,matrix(),false).also{if(it!==bmp)bmp.recycle()} else bmp
+        check(!closed){"原图读取器已关闭"}
+        require(b.left>=0 && b.top>=0 && b.right<=width && b.bottom<=height && b.w>0 && b.h>0){"原图区域超出边界"}
+        require(sample>0 && sample and (sample-1)==0){"照片采样参数无效"}
+        val e=NativeImageMath.encodedBox(b,info.width,info.height,orientation)
+        val region=decoder
+        val bmp=if(region!=null){
+            val opts=BitmapFactory.Options().apply{inSampleSize=sample;inScaled=false;inPreferredConfig=Bitmap.Config.ARGB_8888}
+            region.decodeRegion(Rect(e.left,e.top,e.right,e.bottom),opts)?:error("读取原图区域失败")
+        }else{
+            val source=full()
+            val scale=Matrix().apply{setScale(maxOf(1,e.w/sample).toFloat()/e.w,maxOf(1,e.h/sample).toFloat()/e.h)}
+            val part=Bitmap.createBitmap(source,e.left,e.top,e.w,e.h,scale,sample>1)
+            // createBitmap may alias a whole-image identity crop. Callers always own/recycle the returned bitmap.
+            if(part===source)source.copy(Bitmap.Config.ARGB_8888,false)?:error("无法复制原像素") else part
+        }
+        try {
+            PhotoPixelContract.decoded(e.w,e.h,sample,bmp.width,bmp.height)
+            return if(orientation in 2..8)Bitmap.createBitmap(bmp,0,0,bmp.width,bmp.height,matrix(),false).also{if(it!==bmp)bmp.recycle()} else bmp
+        }catch(t:Throwable){bmp.recycle();throw t}
     }
     fun planes(b:NativeImageMath.Box,sample:Int=1):Planes {
         val bmp=bitmap(b,sample)
@@ -36,10 +75,13 @@ class RegionPhoto(context:Context,uri:Uri):AutoCloseable {
         finally{bmp.recycle()}
     }
     fun analysis(maxSide:Int):Planes {
+        require(maxSide>0)
         var sample=1
         while(max(width,height)/sample>maxSide)sample*=2
         return planes(NativeImageMath.Box(0,0,width,height),sample)
     }
-    @Synchronized override fun close(){decoder.recycle();input.close()}
+    @Synchronized override fun close(){
+        if(closed)return;closed=true
+        try{decoder?.recycle();whole?.recycle()}finally{decoder=null;whole=null;input?.close();input=null}
+    }
 }
-

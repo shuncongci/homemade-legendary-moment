@@ -192,8 +192,7 @@ class LeicaActivity:AppCompatActivity() {
                 }
             }
         }}
-        colorControls.block(row(*styleButtons.take(2).toTypedArray()))
-        colorControls.block(styleButtons.last(),6)
+        styleButtons.chunked(2).forEachIndexed{i,buttons->colorControls.block(row(*buttons.toTypedArray()),if(i==0)0 else 6)}
         styleHint=label("选择风格后点击显影；不会自动处理或保存。",11f)
         colorControls.block(styleHint,6);controls.addView(colorControls)
         depthControls=section("景深")
@@ -433,20 +432,35 @@ class LeicaActivity:AppCompatActivity() {
         }
     }
     private fun onPicked(uri:Uri){
-        previewUpdates.discard();subjectWork.invalidate()
         operation(PhotoFlow.Operation.PREVIEW,"读取原图"){
-            val imported=withContext(dispatcher){val scope=currentCoroutineContext();photoImports.import(uri){scope.ensureActive()}}
-            // Validate before replacing the current durable source, so bad imports keep the previous edit.
-            withContext(dispatcher){engine.loadPreview(imported).recycle();session.importSource(java.io.File(checkNotNull(imported.path)));engine.clearDepthCache()}
-            val local=Uri.fromFile(checkNotNull(session.source()))
-            interruptedKind="";lastEditorState=null
-            val hdr=withContext(dispatcher){HdrAutoSource.detect(applicationContext,local)}
-            val (bmp,dimensions)=withContext(dispatcher){engine.loadPreview(local) to RegionPhoto(applicationContext,local).use{it.width to it.height}}
-            crop=CompositionGeometry.FULL;compare.crop=crop;sourceWidth=dimensions.first;sourceHeight=dimensions.second
-            clearDepthViews();developView.reset();stageView.setPhoto(bmp);compare.setSources(local,null);compare.original=bmp;compare.result=null;compare.resetViewport();compare.focusOverlay=null;compare.subjectOverlay=null
-            photo=local;sourceHdr=hdr;current=null;resultAppearance=null;flow.photoLoaded();viewer=Viewer.ORIGINAL;restored=true
-            withContext(dispatcher){engine.clearCache()}
-            status.text="${if(sourceHdr)"HDR来源 · 生成时处理HDR，默认HDR导出"else "SDR来源 · SDR处理与导出"}。选成像方式后可手动点焦；也可直接打开深度视图。"
+            val owner=currentCoroutineContext()
+            var pending:Bitmap?=null
+            try {
+                // Complete all fallible source inspection before replacing the durable edit.
+                val prepared=withContext(dispatcher){
+                    val imported=photoImports.import(uri){owner.ensureActive()}
+                    val dimensions=PhotoPixels.inspect(applicationContext,imported).displaySize
+                    pending=engine.loadPreview(imported)
+                    val hdr=HdrAutoSource.detect(applicationContext,imported)
+                    owner.ensureActive();Triple(imported,dimensions,hdr)
+                }
+                owner.ensureActive()
+                // Once the checkpoint commits, cancellation must not leave the UI on the deleted old source.
+                withContext(NonCancellable){
+                    val (imported,dimensions,hdr)=prepared
+                    val local=withContext(dispatcher){
+                        session.importSource(java.io.File(checkNotNull(imported.path))){owner.ensureActive()}
+                        Uri.fromFile(checkNotNull(session.source()))
+                    }
+                    val bmp=checkNotNull(pending)
+                    previewUpdates.discard();subjectWork.invalidate();interruptedKind="";lastEditorState=null
+                    crop=CompositionGeometry.FULL;compare.crop=crop;sourceWidth=dimensions.first;sourceHeight=dimensions.second
+                    clearDepthViews();developView.reset();stageView.setPhoto(bmp);compare.setSources(local,null);compare.original=bmp;pending=null;compare.result=null;compare.resetViewport();compare.focusOverlay=null;compare.subjectOverlay=null
+                    photo=local;sourceHdr=hdr;current=null;resultAppearance=null;flow.photoLoaded();viewer=Viewer.ORIGINAL;restored=true
+                    withContext(dispatcher){engine.clearDepthCache();engine.clearCache()}
+                    status.text="${if(sourceHdr)"HDR来源 · 生成时处理HDR，默认HDR导出"else "SDR来源 · SDR处理与导出"}。选成像方式后可手动点焦；也可直接打开深度视图。"
+                }
+            }finally{pending?.recycle()}
         }
     }
     private fun showSubjectRemoval(){
@@ -739,7 +753,7 @@ class LeicaActivity:AppCompatActivity() {
                 outputSize=state["output"]?.let{BokehOutput.valueOf(it)}?:outputSize
                 state["crop"]?.split(",")?.map{it.toDouble()}?.let{crop=CompositionGeometry.Crop(it[0],it[1],it[2],it[3])}
                 val bmp=result?.original?:withContext(dispatcher){engine.loadPreview(uri)}
-                val dimensions=withContext(dispatcher){RegionPhoto(applicationContext,uri).use{it.width to it.height}}
+                val dimensions=withContext(dispatcher){PhotoPixels.inspect(applicationContext,uri).displaySize}
                 sourceWidth=dimensions.first;sourceHeight=dimensions.second;sourceHdr=state["hdrSource"]=="true"
                 compare.original=bmp;compare.result=result?.result?:if(flow.hasResult)bmp else null
                 compare.setSources(uri,result?.let{Uri.fromFile(it.file)}?:if(flow.hasResult)uri else null)

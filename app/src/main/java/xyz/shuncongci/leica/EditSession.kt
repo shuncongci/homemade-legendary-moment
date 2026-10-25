@@ -8,7 +8,8 @@ import xyz.shuncongci.leica.LegendaryMath.Point
 class EditSession(directory:File) {
     val store=LatestCheckpoint(directory)
     fun source()=store.file("source")
-    fun importSource(file:File){
+    fun importSource(file:File,validate:()->Unit = {}){
+        validate()
         store.reset(mapOf("job.kind" to "", "job.stage" to "0"),mapOf("source" to {out->file.inputStream().use{input->out.outputStream().use{input.copyTo(it)}}}))
     }
     fun ui(meta:Map<String,String>){if(source()!=null)store.update(meta.mapKeys{"ui."+it.key})}

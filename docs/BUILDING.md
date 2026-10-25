@@ -25,7 +25,7 @@ Android Gradle Plugin 8.7.3、Kotlin 2.0.21、Gradle 8.9，版本在工程中固
 
 macOS/Linux 用 ./gradlew（首次执行 chmod +x gradlew）。标准测试入口 :app:testDebugUnitTest 也保留；verifyLeicaMath 直接用 JUnitCore 运行同一套断言，适合 Gradle 测试进程遇到路径问题的环境。
 
-本次 2.5.0 公开树已通过 1240 项 JVM 测试，并构建 Debug、未签名 Release 与 AndroidTest APK；设备测试尚未运行。需要只编译设备诊断包时可执行 `:app:assembleDebugAndroidTest`，不要把生成测试 APK 当作测试已经执行。
+本次 2.5.1 公开树已通过 1302 项 JVM 测试，并构建 Debug、未签名 Release 与 AndroidTest APK；设备测试尚未运行。需要只编译设备诊断包时可执行 `:app:assembleDebugAndroidTest`，不要把生成测试 APK 当作测试已经执行。
 
 默认输出为 app/build/outputs/apk/debug/app-debug.apk。Debug 使用你电脑上的 Android 调试密钥签名，不使用我的发布签名。如果与已安装版本的签名不同，不能直接覆盖安装。卸载可能丢失应用数据，处理签名冲突前请先确认备份和数据保留方式。
 
@@ -65,6 +65,8 @@ python tools/generate_test_fixtures.py
 ```
 
 保留的 legendary/ 和 highlight-v4/ 为历史小尺寸数值回归夹具。它们的输入已作独立合成特征检查，但这里没有收录完整的原始生成脚本；不要把这些参考数据当成真实照片效果或模型输出的证明。名称中的旧风格名仅为兼容历史测试资源引用。
+
+PureLutTest 在内存中构造身份表、通道交换和多线性函数节点；不需要下载 LUT 或照片。DngDimensionsTest 使用合成 TIFF/DNG 元数据，PhotoImportCommitTest 检查提交边界；这些不能替代真实相机 DNG 和系统 codec 验证。AndroidTest 的 `raw-import` 诊断只创建合成 GIF/PNG/JPEG，不是 RAW 画质测试。
 
 把验证输出放到工程外
 

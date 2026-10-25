@@ -24,7 +24,7 @@ object CompositionFiles {
         require(file.parentFile?.parentFile==root && file.isFile){"构图来源已失效，请返回并重新打开"};return file
     }
     fun release(context:Context,path:String){runCatching{source(context,path).parentFile?.deleteRecursively()}}
-    fun dimensions(context:Context,file:File):Pair<Int,Int> = RegionPhoto(context,Uri.fromFile(file)).use{it.width to it.height}
+    fun dimensions(context:Context,file:File):Pair<Int,Int> = PhotoPixels.inspect(context,Uri.fromFile(file)).displaySize
     class Loaded(val bitmap:Bitmap,val sourceW:Int,val sourceH:Int,val image:Planes)
     /** onPreview borrows the decoded bitmap; UI consumers must copy it before retaining it. */
     fun load(context:Context,file:File,cancel:Cancel,onPreview:(Bitmap)->Unit={}):Loaded = loadSource(context,Uri.fromFile(file),CompositionGeometry.FULL,cancel,onPreview)

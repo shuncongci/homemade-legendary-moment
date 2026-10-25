@@ -155,23 +155,9 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
         } ?: 1
     } catch (_: Exception) { 1 }
 
-    private fun bounds(uri: Uri): Pair<Int, Int> {
-        val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        // inJustDecodeBounds always makes decodeStream return null; only a null stream means "cannot open".
-        val stream = context.contentResolver.openInputStream(uri) ?: throw IllegalArgumentException("无法打开这张照片")
-        stream.use { BitmapFactory.decodeStream(it, null, o) }
-        if (o.outWidth <= 0 || o.outHeight <= 0) throw IllegalArgumentException("不支持的照片格式")
-        return o.outWidth to o.outHeight
-    }
+    private fun bounds(uri: Uri): Pair<Int, Int> = PhotoPixels.inspect(context,uri).let{it.width to it.height}
 
-    private fun decode(uri: Uri, sample: Int): Bitmap {
-        val o = BitmapFactory.Options().apply {
-            inSampleSize = sample
-            inPreferredConfig = Bitmap.Config.ARGB_8888
-        }
-        return context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, o) }
-            ?: throw IllegalArgumentException("无法解码这张照片")
-    }
+    private fun decode(uri: Uri, sample: Int): Bitmap = PhotoPixels.decode(context,uri,sample)
 
     /** Small, orientation-corrected preview for the picker step. */
     fun loadPreview(uri: Uri): Bitmap {
@@ -281,6 +267,7 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
     }
     /** Options live as long as the session; actual per-size assignment is profiled. */
     private fun session(style: LeicaStyle): HardwareSession {
+        check(style==LeicaStyle.COOL || style==LeicaStyle.WARM){"该风格不使用冷暖调色模型"}
         session?.let{if(sessionStyle==style)return it}
         closeSession()
         session=HardwareSession(env,modelPath(style.asset,style.sha256),"调色",cacheDir,hardwareReport)
@@ -416,7 +403,7 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
         val t0=SystemClock.elapsedRealtime();hardwareReport.reset();cacheDir.mkdirs()
         var resultFile=File(cacheDir,"result-${java.util.UUID.randomUUID()}.png")
         var durableResult=false
-        val renderKey=listOf("240",uri,style.id,blurEnabled,point,aperture,outputSize,colorEnabled,renderSize,subjectEnabled,subjectPoints,subjectResolution.longEdge).joinToString("|")
+        val renderKey=listOf("251",uri,style.id,style.sha256,blurEnabled,point,aperture,outputSize,colorEnabled,renderSize,subjectEnabled,subjectPoints,subjectResolution.longEdge).joinToString("|")
         recovery?.beginRender(renderKey)
         val sourceHdr=if(hdrOutput==null)HdrAutoSource.detect(context,uri)else true
         var hdrReady=false;var hdrFallback=""

@@ -17,6 +17,9 @@ class HairDiagnosticInstrumentation:Instrumentation(){
         val info=Bundle()
         try {
             val ctx=targetContext
+            if(args.getString("case")=="raw-import"){
+                val dir=RawImportDiagnostic.run(ctx);info.putString("stream","Synthetic import/codec diagnostic complete (not camera RAW quality acceptance): ${dir.absolutePath}\n");finish(Activity.RESULT_OK,info);return
+            }
             if(args.getString("case")=="export-motion"){
                 val dir=MotionDiagnostic.run(this,ctx);info.putString("stream","Motion endpoint diagnostic complete: ${dir.absolutePath}\n");finish(Activity.RESULT_OK,info);return
             }
