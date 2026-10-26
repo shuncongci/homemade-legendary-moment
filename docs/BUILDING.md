@@ -25,7 +25,7 @@ Android Gradle Plugin 8.7.3、Kotlin 2.0.21、Gradle 8.9，版本在工程中固
 
 macOS/Linux 用 ./gradlew（首次执行 chmod +x gradlew）。标准测试入口 :app:testDebugUnitTest 也保留；verifyLeicaMath 直接用 JUnitCore 运行同一套断言，适合 Gradle 测试进程遇到路径问题的环境。
 
-本次 2.5.2 包含 HDR 真实预览、双显影及其合成回归源码。本轮未运行公开树 JVM/AndroidTest、性能测试或构建；不能把静态同步核对当作回归通过。2.5.1 的 1302 项 JVM 通过，以及 Debug、未签名 Release、AndroidTest 构建是历史记录，不是当前版本结论。只编译设备测试源码可执行 `:app:compileDebugAndroidTestKotlin`；确需测试 APK 才执行 `:app:assembleDebugAndroidTest`，两者均不等于已运行设备测试。
+公开 2.6.0（versionCode 61）已通过 1659 项 JVM 测试、Release Kotlin 和 AndroidTest Kotlin 编译、未签名 Release 构建；本机使用同版本官方 ONNX Runtime 1.28.0 AAR 的显式离线覆盖。构建前后公开源码摘要一致，原测试和合成夹具未改。公开版没有私有风格相关的 72 项测试，因此项数不与私有安装包的 1731 项混用。未安装或运行手机，没有实际操作用户照片；编译通过不代表真实模型齐全、通知/后台行为、相册识别、HDR 显示或 50MP 总内存已验收。 AndroidTest 只编译可执行 `:app:compileDebugAndroidTestKotlin`，不等于设备运行。
 
 默认输出为 app/build/outputs/apk/debug/app-debug.apk。Debug 使用你电脑上的 Android 调试密钥签名，不使用我的发布签名。如果与已安装版本的签名不同，不能直接覆盖安装。卸载可能丢失应用数据，处理签名冲突前请先确认备份和数据保留方式。
 
@@ -70,7 +70,7 @@ PureLutTest 在内存中构造身份表、通道交换和多线性函数节点�
 
 2.5.2 的 TransferPerformanceTest、HdrStreamingTest、ReconstructionSpeedTest 和 SubjectRecoveryTest 使用确定性合成像素、增益图和蒙版，连同测试专用的 Baseline 类保留原标量表达式，供复核逐位数值、缓存字节/元数据、取消/失败清理与恢复身份。它们不读取维护者的本地审计目录，不附私人样片；重建测试也不以墙钟耗时断言性能。测试源码的存在不代表本次已经执行或通过。
 
-HdrDevelopModeTest 新增 35 项：显式 HDR/SDR 路由、按钮权重、真实增益图显示策略、独立缓存、持久化选择与取消/恢复保留原片和上次成片。HdrDiagnostic 增加生产显示解码、8 种 EXIF 方向、裁剪及拷贝的增益图保留探针，使用合成图；这些探针本轮在公开树未编译或运行。HDR 真实亮度、触控/旋转、前后台和相册显示必须在支持的真机另验。
+HdrDevelopModeTest 新增 35 项：显式 HDR/SDR 路由、按钮权重、真实增益图显示策略、独立缓存、持久化选择与取消/恢复保留原片和上次成片。HdrDiagnostic 增加生产显示解码、8 种 EXIF 方向、裁剪及拷贝的增益图保留探针，使用合成图；这些探针在2.6.0公开树仅编译，未在设备运行。HDR 真实亮度、触控/旋转、前后台和相册显示必须在支持的真机另验。
 
 把验证输出放到工程外
 
@@ -81,3 +81,5 @@ HdrDevelopModeTest 新增 35 项：显式 HDR/SDR 路由、按钮权重、真实
 ```
 
 建议使用绝对路径；生成的 APK、日志和缓存不属于公开源码清单。.gitignore 已排除常规构建目录，但发布前仍应检查目录内容，不能仅依赖忽略规则保护凭据。
+
+2.6.0 新增的外接、EXIF/容器、扫描、监测与编辑呈现测试使用内存中的合成身份、回调、TIFF 字段及 16×12 纯色容器，不读取相册或私人样片；原片处置测试没有删除用户照片。当前登记共1659项，保留此前公开测试及夹具。公开构建仍从 Maven 获取依赖或显式使用官方本地 AAR，不依赖作者的保护或签名材料。

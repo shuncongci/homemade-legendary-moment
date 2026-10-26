@@ -192,7 +192,8 @@ object ExportUi {
         }
     }
     fun show(anchor:StudioButton,current:ExportFormat,sizeLabel:String,selected:(ExportFormat)->Unit,export:(ExportFormat)->Unit,
-             sourceHdr:Boolean=false,hdrUnavailableReason:String?=null,exportHdr:(()->Unit)?=null):Handle? {
+             sourceHdr:Boolean=false,hdrUnavailableReason:String?=null,exportHdr:(()->Unit)?=null,
+             badge:Boolean?=null,badgeChanged:(Boolean)->Unit={}):Handle? {
         if(!anchor.isAttachedToWindow || anchor.width<=0 || anchor.height<=0)return null
         val context=anchor.context;val host=activity(context)?:return null
         val decor=host.window.decorView as? ViewGroup?:return null
@@ -215,8 +216,14 @@ object ExportUi {
         val size=text("$sizeLabel · 不放大 · ${if(sourceHdr)"HDR成片直接保存"else "SDR成片直接保存"}",11f,secondaryInk);body.addView(size)
         val hdrNote=text(if(sourceHdr)"当前为 HDR · 仅提供 Ultra HDR JPG。保存已生成成片，不重新调色或虚化。"else "当前为 SDR · 请选择下方导出格式。",11f,secondaryInk);body.addView(hdrNote)
         var choice=if(current.supports(Build.VERSION.SDK_INT))current else ExportFormat.DEFAULT
+        var badgeOn=badge==true
+        // Same white/black selected toggle as the editor. Hidden where the caller cannot honour it.
+        val badgeToggle=badge?.let{StudioButton(context).apply{text="徕卡一瞬相册标识";isSelected=badgeOn;ViewCompat.setStateDescription(this,if(badgeOn)"已开启" else "已关闭")}}
+        badgeToggle?.let{body.addView(it,LinearLayout.LayoutParams(MATCH_PARENT,WRAP_CONTENT).apply{topMargin=dp(2)})}
+        val badgeNote=text("只写在照片信息里，不改画面；开启后只能存为 JPG。小米相册能否显示取决于系统版本。",10f,secondaryInk).apply{visibility=if(badge==null)View.GONE else View.VISIBLE};body.addView(badgeNote)
         val group=RadioGroup(context).apply{orientation=RadioGroup.VERTICAL};body.addView(group)
-        val cards=ExportMenuChoices.available(sourceHdr,Build.VERSION.SDK_INT).map{option->
+        val options=ExportMenuChoices.available(sourceHdr,Build.VERSION.SDK_INT)
+        val cards=options.map{option->
             val format=option.format
             RadioButton(context).apply{
                 id=View.generateViewId()
@@ -225,15 +232,27 @@ object ExportUi {
                 gravity=Gravity.CENTER_VERTICAL;minHeight=dp(if(option.hdr)72 else 88);setPadding(dp(4),dp(9),dp(5),dp(9));isChecked=option.selected(choice)
                 contentDescription=if(format==null)"${option.label}，保留 HDR，当前唯一导出格式" else "${option.label}，${format.storageHint}，${format.qualityRating}，${description(format)}"
                 group.addView(this,RadioGroup.LayoutParams(MATCH_PARENT,WRAP_CONTENT))
-                setOnClickListener{if(format!=null && choice!=format){choice=format;selected(format)}}
+                setOnClickListener{if(!badgeOn && format!=null && choice!=format){choice=format;selected(format)}}
             }
         }
         val note=text(if(sourceHdr)"导出为带增益图的 JPG；实际裁剪与尺寸设置仍生效。裁剪时只处理几何与编码，不重新运行模型。" else "比例以此PNG导出为基准，是本轮桌面样本的存储体积参考，不是运行内存或手机编码保证值；不同照片可超出范围。PNG本轮优化相对旧版另省约19–20%。\nPNG保留当前可用像素，不是复制未调色原文件；裁剪与已有尺寸仍生效。透明图请选择PNG；大图内存不足也可用分块PNG。不会自动缩图。现有SDR流程为8位sRGB。",10f,secondaryInk);body.addView(note)
+        /** Formats the badge cannot carry collapse (fade + height) instead of jumping; the remembered SDR choice is kept. */
+        fun applyBadge(animate:Boolean){
+            if(animate && ValueAnimator.areAnimatorsEnabled())android.transition.TransitionManager.beginDelayedTransition(body,android.transition.AutoTransition().apply{duration=240})
+            val effective=ExportMenuChoices.exportFormat(choice,badgeOn)
+            options.forEachIndexed{i,o->cards[i].visibility=if(ExportMenuChoices.visible(o,badgeOn))View.VISIBLE else View.GONE;cards[i].isChecked=o.selected(effective)}
+            if(!sourceHdr)note.visibility=if(badgeOn)View.GONE else View.VISIBLE
+        }
+        badgeToggle?.setOnClickListener{
+            badgeOn=!badgeOn;badgeToggle.isSelected=badgeOn;ViewCompat.setStateDescription(badgeToggle,if(badgeOn)"已开启" else "已关闭")
+            badgeChanged(badgeOn);applyBadge(true)
+        }
+        applyBadge(false)
         val footer=LinearLayout(context).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(0,dp(10),0,0)}
         column.addView(footer,LinearLayout.LayoutParams(MATCH_PARENT,WRAP_CONTENT))
         val back=StudioButton(context).apply{text="收起"};footer.addView(back,LinearLayout.LayoutParams(dp(68),WRAP_CONTENT))
         val confirm=StudioButton(context,true).apply{text="确认导出"};footer.addView(confirm,LinearLayout.LayoutParams(0,WRAP_CONTENT,1f).apply{marginStart=dp(8)})
-        val handle=Handle(anchor,host,decor,root,surface,panel,scrim,listOf(header,size,hdrNote)+cards+listOf(note,footer),d,if(sourceHdr)340 else 580)
+        val handle=Handle(anchor,host,decor,root,surface,panel,scrim,listOf(header,size,hdrNote)+listOfNotNull(badgeToggle)+listOf(badgeNote)+cards+listOf(note,footer),d,if(sourceHdr)340 else 580)
         back.setOnClickListener{handle.close()};scrim.setOnClickListener{handle.close()}
         confirm.setOnClickListener{confirm.isEnabled=false;val snapshot=choice;val keepHdr=sourceHdr;handle.close{if(keepHdr)checkNotNull(exportHdr).invoke()else export(snapshot)}}
         decor.addView(root,ViewGroup.LayoutParams(MATCH_PARENT,MATCH_PARENT))

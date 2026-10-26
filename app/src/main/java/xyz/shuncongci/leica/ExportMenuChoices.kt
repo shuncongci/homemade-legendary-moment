@@ -11,4 +11,7 @@ object ExportMenuChoices {
     }
     fun available(hdrReady:Boolean,sdk:Int):List<Option> =
         if(hdrReady)listOf(Option(null)) else ExportFormat.available(sdk).map{Option(it)}
+    /** Gallery badge needs EXIF in a JPEG; HDR is already a JPEG container. */
+    fun visible(option:Option,badge:Boolean)=!badge || option.hdr || option.format==ExportFormat.JPEG
+    fun exportFormat(choice:ExportFormat,badge:Boolean)=if(badge)ExportFormat.JPEG else choice
 }

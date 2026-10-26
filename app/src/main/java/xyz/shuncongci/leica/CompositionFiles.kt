@@ -46,15 +46,26 @@ object CompositionFiles {
     fun save(context:Context,file:File,crop:CompositionGeometry.Crop,cancel:Cancel,outputSize:Pair<Int,Int>?=null,
              format:ExportFormat=ExportPreferences.load(context)):String = saveSource(context,Uri.fromFile(file),crop,cancel,outputSize,format)
     fun saveSource(context:Context,uri:Uri,crop:CompositionGeometry.Crop,cancel:Cancel,outputSize:Pair<Int,Int>?=null,
-                   format:ExportFormat=ExportPreferences.load(context)):String {
+                   format:ExportFormat=ExportPreferences.load(context),badge:Boolean=false):String {
+        require(!badge || format==ExportFormat.JPEG){"徕卡一瞬相册标识仅支持JPEG"}
         val name="传奇一瞬-${System.currentTimeMillis()}-${UUID.randomUUID().toString().take(8)}.${format.extension}"
         val cr=context.contentResolver
         RegionPhoto(context,uri).use { source->
             val box=CompositionGeometry.pixels(crop,source.width,source.height)
             val (ow,oh)=outputSize?: (box.w to box.h)
-            fun encode(output:java.io.OutputStream){PhotoExport.write(context,output,source.width,source.height,crop,ow,oh,format,cancel){b->
+            fun raw(output:java.io.OutputStream){PhotoExport.write(context,output,source.width,source.height,crop,ow,oh,format,cancel){b->
                 source.bitmap(b,1).let{bitmap->try{check(bitmap.width==b.w && bitmap.height==b.h){"原像素区域尺寸不一致"};IntArray(b.w*b.h).also{bitmap.getPixels(it,0,b.w,0,0,b.w,b.h)}}finally{bitmap.recycle()}}
             }}
+            // Badge: same encoder/quality into a private file, then an EXIF-only insert with readback.
+            val marked=if(badge){
+                val plain=File(context.cacheDir,"export-${UUID.randomUUID()}.jpg")
+                try{plain.outputStream().use{raw(it)};LeicaBadgeExport.marked(context,plain,ow,oh,cancel)}finally{plain.delete()}
+            }else null
+            fun encode(output:java.io.OutputStream){
+                if(marked==null){raw(output);return}
+                marked.inputStream().use{input->val buffer=ByteArray(64*1024);while(true){cancel.check();val n=input.read(buffer);if(n<0)break;output.write(buffer,0,n)}}
+            }
+            try{
             if(Build.VERSION.SDK_INT>=29){
                 val values=ContentValues().apply{put(MediaStore.Images.Media.DISPLAY_NAME,name);put(MediaStore.Images.Media.MIME_TYPE,format.mime);put(MediaStore.Images.Media.RELATIVE_PATH,"Pictures/传奇一瞬");put(MediaStore.Images.Media.IS_PENDING,1)}
                 ExportCommit.run(cancel,
@@ -70,6 +81,7 @@ object CompositionFiles {
             ExportCommit.run(cancel,create={check(target.createNewFile()){"同名文件已存在，未覆盖"};target},
                 write={it.outputStream().use{out->encode(out)}},publish={},rollback={check(it.delete()){"半成品清理失败"}})
             return target.absolutePath
+            }finally{marked?.delete()}
         }
     }
 }

@@ -1,6 +1,6 @@
 # 实现说明
 
-这份说明介绍我发布的 2.5.2 源码中的处理链路、工作尺寸和已知限制，供阅读或修改代码时参考。
+这份说明介绍我发布的 2.6.0 源码中的处理链路、工作尺寸和已知限制，供阅读或修改代码时参考。
 
 主要代码在 app/src/main/java/xyz/shuncongci/leica。界面入口是 LeicaActivity.kt；LeicaEngine.kt 负责模型会话和处理链路。PhotoFlow.kt、PhotoWorkflow.kt 管理当前照片、处理方式和请求状态，界面操作不应直接绕过这些状态。
 
@@ -66,4 +66,14 @@ PureLut.kt 提供无 Android 依赖的通用三线性查表：PLUT0001、big-end
 
 verifyLeicaMath 运行不依赖 Android 设备的 JUnit 测试。我随源码提供的 leica 测试数据由程序生成，沿用旧文件名仅为兼容测试引用；其中 expected 图不是神经网络推理结果。其余历史数值夹具原样保留。
 
-本次 2.5.2 同步保留原测试及合成夹具，并加入 HDR/SDR 路由、布局、显示策略及恢复的 35 项测试，以及此前融合/光学、流式 HDR、重建等价、取消/清理和主体恢复用例。测试来源和蒙版由程序确定性构造，不带真实照片。本轮未运行公开树用例、构建或设备测试，静态代码同步核对不能证明公开树通过回归。2.5.1 的 1302 项 JVM 通过及 Debug、未签名 Release、AndroidTest 构建仅为历史结果，不适用于本次源码树。冷暖模型和哈希不变，没有重新导出模型。Android 界面、实际编解码/相册发布、HDR 真实亮度与前后台切换、多点页面返回/进程恢复、陀螺仪、峰值内存与全链路耗时仍需另行验收。
+公开 2.6.0（versionCode 61）已通过 1659 项 JVM 测试、Release Kotlin 和 AndroidTest Kotlin 编译、未签名 Release 构建；本机使用同版本官方 ONNX Runtime 1.28.0 AAR 的显式离线覆盖。构建前后公开源码摘要一致，原测试和合成夹具未改。公开版没有私有风格相关的 72 项测试，因此项数不与私有安装包的 1731 项混用。未安装或运行手机，没有实际操作用户照片；编译通过不代表真实模型齐全、通知/后台行为、相册识别、HDR 显示或 50MP 总内存已验收。
+
+## 2.6.0 外接、元数据与呈现
+
+ExternalModeActivity / ExternalModeService 是独立的用户启动入口；ExternalArrivalGate 维护基线与稳定门禁，ExternalFolders 使用行 ID 游标、已知项跳过和单张定位，通知与闲置兜底共用定时器。ExternalQueueStore 是发布日志，不是历史相册待办；不会在重启后重排旧照片。ExternalPhotoInput、ExternalPhotoExport、ExternalOriginalGuard 和 ExternalSourceDeletion 固定来源/输出身份及指纹，成功发布并回读后才按用户策略尝试处置。
+
+CaptureExif / CaptureMetadataContainer 按容器写入本张来源的拍摄 EXIF/GPS 并核验，不搬用样例信息。LeicaBadgeExport 仅对已编码 JPEG 注入候选 ExifIFD 0x88B0 标志；主 JPEG 和增益 JPEG 不重新编码，不保证厂家相册识别。
+
+EditorPresentation / EditorLayout 用真实视图滑动与裁剪维护布局；DevelopView 在真实成片就绪后保持最后一帧并连续缩放/裁剪交接，不把 HDR 照片截图为 SDR 做转场。DiagnosticsPanel / LiveDiagnostics 提供指标卡片与按需详情；RuntimeMonitor 提供可选静音参数通知，编辑与外接偏好独立。
+
+这些变化不加入私有风格路径，冷暖两份模型和其哈希保持不变。使用和权限边界见 [外接与编辑说明](EXTERNAL-MODE.md)。

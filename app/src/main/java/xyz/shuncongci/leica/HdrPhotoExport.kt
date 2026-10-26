@@ -17,10 +17,10 @@ import java.util.UUID
 /** Source/geometry-only export. Edited photos must use HdrPairExport's recomputed map instead. */
 object HdrPhotoExport {
     fun saveSource(context:Context,uri:Uri,crop:CompositionGeometry.Crop,cancel:Cancel,
-                   outputSize:Pair<Int,Int>,contentEdited:Boolean=false):String {
+                   outputSize:Pair<Int,Int>,contentEdited:Boolean=false,badge:Boolean=false):String {
         HdrExportPolicy.unavailable(Build.VERSION.SDK_INT,contentEdited)?.let{error(it)}
         check(Build.VERSION.SDK_INT>=34)
-        return HdrPhotoExport34.save(context,uri,crop,cancel,outputSize)
+        return HdrPhotoExport34.save(context,uri,crop,cancel,outputSize,badge)
     }
 }
 
@@ -81,14 +81,16 @@ internal object HdrPhotoExport34 {
         cancel.check();val readback=decode(context,uri)
         try{HdrExportPolicy.checkRoundTrip(expected,metadata(readback));cancel.check()}finally{readback.recycle()}
     }
-    fun save(context:Context,uri:Uri,crop:CompositionGeometry.Crop,cancel:Cancel,size:Pair<Int,Int>):String {
-        val temporary=File.createTempFile("hdr-export-",".jpg",context.cacheDir)
+    fun save(context:Context,uri:Uri,crop:CompositionGeometry.Crop,cancel:Cancel,size:Pair<Int,Int>,badge:Boolean=false):String {
+        val encoded=File.createTempFile("hdr-export-",".jpg",context.cacheDir)
+        var temporary=encoded
         try {
             // Encode before creating a MediaStore row; normal save does not decode a readback.
             try{encode(context,uri,crop,size,cancel,temporary)}catch(t:Throwable){
                 if(!HdrAutoPolicy.canFallback(t))throw t
                 cancel.check();throw HdrUnsupportedException(t)
             }
+            if(badge)temporary=LeicaBadgeExport.marked(context,encoded,size.first,size.second,cancel)
             val cr=context.contentResolver;val name="传奇一瞬-HDR-${System.currentTimeMillis()}-${UUID.randomUUID().toString().take(8)}.jpg"
             val values=ContentValues().apply{
                 put(MediaStore.Images.Media.DISPLAY_NAME,name);put(MediaStore.Images.Media.MIME_TYPE,"image/jpeg")
@@ -106,6 +108,6 @@ internal object HdrPhotoExport34 {
                 publish={pending->values.clear();values.put(MediaStore.Images.Media.IS_PENDING,0);check(cr.update(pending,values,null,null)>0){"HDR相册发布失败"}},
                 rollback={pending->check(cr.delete(pending,null,null)>0){"HDR半成品清理失败"}})
             return "Pictures/传奇一瞬/$name"
-        }finally{temporary.delete()}
+        }finally{temporary.delete();encoded.delete()}
     }
 }

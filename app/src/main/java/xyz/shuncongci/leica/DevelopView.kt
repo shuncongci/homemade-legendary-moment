@@ -24,6 +24,8 @@ class DevelopView(context:Context):View(context) {
     private var source:Bitmap?=null;private var colored:Bitmap?=null;private var finalPhoto:Bitmap?=null
     private var focus=LegendaryMath.Point(.5f,.5f);private var focusTiles:DevelopMath.FocusTiles?=null
     private var loop:ValueAnimator?=null;private var lastPlay=0L;private var active=false
+    private var finalSettle:ValueAnimator?=null;private var finalAmount=0f
+    private var finalCrop=CompositionGeometry.FULL
     private val completion=DevelopCompletion()
     private val imagePaint=Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val grayPaint=Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply{colorFilter=ColorMatrixColorFilter(ColorMatrix().apply{setSaturation(0f)})}
@@ -53,7 +55,7 @@ class DevelopView(context:Context):View(context) {
     private val vaporTexture=fogTexture(false);private val waveTexture=fogTexture(true)
     private var closed=false
     init{visibility=GONE;isClickable=true;contentDescription="生成过程的显示动画，不改变照片；完成效果仅在真实结果就绪后呈现。"}
-    val presenting get()=motion.visible
+    val presenting get()=motion.visible || EditorPresentation.holdFinal(motion.stage,finalPhoto!=null)
     val hdrContent get()=HdrPreview.hasGainmap(source) || HdrPreview.hasGainmap(finalPhoto)
     private fun animated()=active && isAttachedToWindow && windowVisibility==VISIBLE && ValueAnimator.areAnimatorsEnabled()
     fun beginSource(bitmap:Bitmap){
@@ -79,10 +81,10 @@ class DevelopView(context:Context):View(context) {
             }
         };sync()
     }
-    fun finish(bitmap:Bitmap,rendered:Boolean,done:(Boolean)->Unit){
+    fun finish(bitmap:Bitmap,rendered:Boolean,crop:CompositionGeometry.Crop=CompositionGeometry.FULL,done:(Boolean)->Unit){
         if(closed){done(false);return};if(source==null){done(true);return}
         check(!completion.pending)
-        finalPhoto?.recycle();finalPhoto=HdrPreview.copy(bitmap);completion.await(done)
+        finalPhoto?.recycle();finalPhoto=HdrPreview.copy(bitmap);finalCrop=crop;finalAmount=0f;completion.await(done)
         motion.resultCompleted(rendered);sync()
     }
     fun setActive(value:Boolean){active=value;if(!value){stop();motion.reduceMotion()};sync()}
@@ -90,8 +92,8 @@ class DevelopView(context:Context):View(context) {
     private fun sync(){
         if(closed)return
         if(!animated()){motion.reduceMotion();tileReveal.settle()}
-        visibility=if(motion.visible)VISIBLE else GONE
-        if(motion.stage==DevelopMotion.Stage.DONE){stop();completion.resolve(true);return}
+        visibility=if(presenting)VISIBLE else GONE
+        if(motion.stage==DevelopMotion.Stage.DONE){stop();settleFinal();return}
         if(!animated() || !motion.needsFrames){stop();invalidate();return}
         if(loop==null){lastPlay=0;loop=ValueAnimator.ofFloat(0f,1f).apply{
             duration=10000;repeatCount=ValueAnimator.INFINITE;interpolator=LinearInterpolator()
@@ -102,11 +104,25 @@ class DevelopView(context:Context):View(context) {
             };start()
         }};invalidate()
     }
-    fun reset(){stop();motion.reset();tileReveal.reset();passPhoto?.recycle();previousPass?.recycle();passPhoto=null;previousPass=null;source?.recycle();colored?.recycle();finalPhoto?.recycle();source=null;colored=null;finalPhoto=null;focusTiles=null;tileColors=IntArray(0);tileDepth=FloatArray(0);tileOrder=emptyArray();maskTime=Float.NEGATIVE_INFINITY;visibility=GONE;completion.resolve(false)}
+    private fun settleFinal(){
+        if(!animated()){
+            val old=finalSettle;finalSettle=null;old?.cancel();finalAmount=1f;invalidate();completion.resolve(true);return
+        }
+        if(!completion.pending || finalSettle!=null)return
+        finalSettle=ValueAnimator.ofFloat(finalAmount,1f).apply{
+            duration=220;interpolator=android.view.animation.PathInterpolator(.2f,0f,0f,1f)
+            addUpdateListener{finalAmount=it.animatedValue as Float;invalidate()}
+            addListener(object:android.animation.AnimatorListenerAdapter(){override fun onAnimationEnd(a:android.animation.Animator){
+                if(finalSettle===a){finalSettle=null;finalAmount=1f;invalidate();completion.resolve(true)}
+            }})
+            start()
+        }
+    }
+    fun reset(){val old=finalSettle;finalSettle=null;old?.cancel();finalAmount=0f;stop();motion.reset();tileReveal.reset();passPhoto?.recycle();previousPass?.recycle();passPhoto=null;previousPass=null;source?.recycle();colored?.recycle();finalPhoto?.recycle();source=null;colored=null;finalPhoto=null;focusTiles=null;tileColors=IntArray(0);tileDepth=FloatArray(0);tileOrder=emptyArray();maskTime=Float.NEGATIVE_INFINITY;visibility=GONE;completion.resolve(false)}
     fun skipPresentation(){reset()}
     fun close(){if(closed)return;closed=true;reset();mask.recycle();vaporTexture.recycle();waveTexture.recycle()}
     override fun onAttachedToWindow(){super.onAttachedToWindow();sync()}
-    override fun onDetachedFromWindow(){stop();motion.reduceMotion();if(motion.stage==DevelopMotion.Stage.DONE)completion.resolve(true);super.onDetachedFromWindow()}
+    override fun onDetachedFromWindow(){stop();motion.reduceMotion();val old=finalSettle;finalSettle=null;old?.cancel();if(motion.stage==DevelopMotion.Stage.DONE){finalAmount=1f;completion.resolve(true)};super.onDetachedFromWindow()}
     override fun onWindowVisibilityChanged(v:Int){super.onWindowVisibilityChanged(v);if(v!=VISIBLE)stop();sync()}
     override fun performClick():Boolean{super.performClick();return true}
     private fun fit(b:Bitmap,scale:Float=1f,offset:Float=0f){
@@ -126,6 +142,13 @@ class DevelopView(context:Context):View(context) {
     override fun onDraw(canvas:Canvas){
         val src=source?:return;if(src.isRecycled || width<=0 || height<=0)return
         canvas.drawColor(0xff0d0e0f.toInt());imagePaint.alpha=255
+        if(EditorPresentation.holdFinal(motion.stage,finalPhoto!=null)){
+            val final=checkNotNull(finalPhoto)
+            val r=EditorPresentation.finalRect(width,height,final.width,final.height,finalCrop,finalAmount)
+            val clip=EditorPresentation.finalClip(r,finalCrop,finalAmount)
+            val save=canvas.save();canvas.clipRect(clip.left,clip.top,clip.right,clip.bottom)
+            rect.set(r.left,r.top,r.right,r.bottom);canvas.drawBitmap(final,null,rect,imagePaint);canvas.restoreToCount(save);return
+        }
         if(!ValueAnimator.areAnimatorsEnabled()) {fit(src);canvas.drawBitmap(finalPhoto?:passPhoto?:colored?:src,null,rect,imagePaint);return}
         when(motion.stage){
             DevelopMotion.Stage.COLOR_WAIT->{fit(src);canvas.drawBitmap(src,null,rect,grayPaint);masked(canvas,src,false)}

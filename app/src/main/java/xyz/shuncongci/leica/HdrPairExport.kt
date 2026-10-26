@@ -82,7 +82,7 @@ object HdrPairExport {
     }
     fun save(context:Context,sdr:Planes,hdr:Frame,crop:CompositionGeometry.Crop,size:Pair<Int,Int>,cancel:Cancel):String =
         save(context,sdr,HdrPixels.of(hdr),crop,size,cancel)
-    internal fun save(context:Context,sdr:Planes,hdr:HdrPixels,crop:CompositionGeometry.Crop,size:Pair<Int,Int>,cancel:Cancel):String {
+    internal fun save(context:Context,sdr:Planes,hdr:HdrPixels,crop:CompositionGeometry.Crop,size:Pair<Int,Int>,cancel:Cancel,badge:Boolean=false):String {
         val temp=File.createTempFile("hdr-pair-",".jpg",context.cacheDir)
         try{
             try{
@@ -90,12 +90,14 @@ object HdrPairExport {
                 val target=HdrPixelGeometry.crop(hdr,crop,size.first,size.second)
                 encode(temp,base,target,cancel)
             }catch(t:Throwable){if(!HdrAutoPolicy.canFallback(t))throw t;cancel.check();throw HdrUnsupportedException(t)}
-            return publish(context,temp,cancel)
+            return publish(context,temp,cancel,if(badge)size else null)
         }finally{temp.delete()}
     }
-    /** Publish a previously encoded immutable JPEG. No source decode, model call or numeric readback. */
-    fun publish(context:Context,file:File,cancel:Cancel):String {
+    /** Publish a previously encoded immutable JPEG. No source decode, model call or numeric readback.
+     * [badge] = output size: only an EXIF packet is inserted into a private copy; gainmap bytes stay exact. */
+    fun publish(context:Context,file:File,cancel:Cancel,badge:Pair<Int,Int>?=null):String {
         check(file.isFile && file.length()>0){"HDR成片缓存缺失，请重新生成"};cancel.check()
+        if(badge!=null){val marked=LeicaBadgeExport.marked(context,file,badge.first,badge.second,cancel);try{return publish(context,marked,cancel)}finally{marked.delete()}}
         val bytes=file.length();val name="传奇一瞬-HDR-${System.currentTimeMillis()}-${UUID.randomUUID().toString().take(8)}.jpg"
         val cr=context.contentResolver
         val values=ContentValues().apply{put(MediaStore.Images.Media.DISPLAY_NAME,name);put(MediaStore.Images.Media.MIME_TYPE,"image/jpeg");put(MediaStore.Images.Media.RELATIVE_PATH,"Pictures/传奇一瞬");put(MediaStore.Images.Media.IS_PENDING,1)}

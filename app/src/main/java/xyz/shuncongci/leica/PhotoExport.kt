@@ -56,4 +56,7 @@ object ExportPreferences {
     private const val KEY="format-id"
     fun load(context:Context)=ExportFormat.fromId(context.getSharedPreferences(FILE,Context.MODE_PRIVATE).getString(KEY,null),Build.VERSION.SDK_INT)
     fun save(context:Context,format:ExportFormat){require(format.supports(Build.VERSION.SDK_INT));context.getSharedPreferences(FILE,Context.MODE_PRIVATE).edit().putString(KEY,format.id).apply()}
+    /** Default off. Does not overwrite the remembered SDR format; while on, SDR export uses JPEG. */
+    fun badge(context:Context)=context.getSharedPreferences(FILE,Context.MODE_PRIVATE).getBoolean("leica-badge",false)
+    fun saveBadge(context:Context,on:Boolean){context.getSharedPreferences(FILE,Context.MODE_PRIVATE).edit().putBoolean("leica-badge",on).apply()}
 }

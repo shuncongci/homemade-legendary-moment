@@ -620,16 +620,16 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
         return Result(LeicaStyle.fromId(v("style")),f,v("width").toInt(),v("height").toInt(),original,preview,v("inferMs").toLong(),v("totalMs").toLong(),v("downscaled")=="true",v("color")=="true",v("rendered")=="true",v("reason"),v("hardware"),v("timing"),v("subject")=="true",null,hdr,v("fallback"))
     }
 
-    fun saveHdr(result:Result,crop:CompositionGeometry.Crop,size:Pair<Int,Int>,cancel:Cancel,progress:(String)->Unit):String {
+    fun saveHdr(result:Result,crop:CompositionGeometry.Crop,size:Pair<Int,Int>,cancel:Cancel,badge:Boolean=false,progress:(String)->Unit):String {
         require(Build.VERSION.SDK_INT>=34){"HDR需要Android14+"}
         check(result.hdrReady){"当前成片为SDR，不能伪造HDR"}
         progress("保存已生成HDR · 不重新调色或虚化")
         if(crop==CompositionGeometry.FULL && size==(result.width to result.height))
-            return HdrPairExport.publish(context,HdrResultStore.jpegFile(result.file),cancel)
+            return HdrPairExport.publish(context,HdrResultStore.jpegFile(result.file),cancel,if(badge)size else null)
         val (sdr,hdr)=try{
             HdrResultStore.readRows(HdrResultStore.pairFile(result.file),result.width,result.height,cancel)
         }catch(t:IllegalArgumentException){if(!HdrAutoPolicy.canFallback(t))throw t;cancel.check();throw HdrUnsupportedException(t)}
-        return hdr.use{HdrPairExport.save(context,sdr,it,crop,size,cancel)}
+        return hdr.use{HdrPairExport.save(context,sdr,it,crop,size,cancel,badge)}
     }
     /** Compatibility entry point shares the current user export policy; never copies a PNG under a JPEG name. */
     fun save(r:Result,format:ExportFormat=ExportPreferences.load(context),cancel:Cancel=Cancel()):String =

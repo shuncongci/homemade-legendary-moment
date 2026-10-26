@@ -13,9 +13,10 @@ class LiveDiagnostics(
     private val window:Window,
     private val worker:()->Thread?,
     private val stage:()->String,
-    private val failure:()->String?
+    private val failure:()->String?,
+    private val detailsRequested:()->Boolean={true}
 ) {
-    data class Snapshot(val summary:String,val details:String)
+    data class Snapshot(val summary:String,val details:String,val phase:String,val metrics:List<String>)
     private var job:Job?=null
     private var handlerThread:HandlerThread?=null
     private val samples=ArrayList<Double>()
@@ -32,7 +33,7 @@ class LiveDiagnostics(
             var lastCpu=android.os.Process.getElapsedCpuTime();var lastWall=SystemClock.elapsedRealtime()
             while(isActive){
                 delay(1500)
-                val phase=stage();val recentFailure=failure()
+                val phase=stage();val recentFailure=failure();val readDetails=detailsRequested()
                 val refresh=window.decorView.display?.refreshRate?.takeIf{it.isFinite() && it>0f}
                 val snapshot=withContext(Dispatchers.Default){
                     val now=SystemClock.elapsedRealtime();val cpu=android.os.Process.getElapsedCpuTime();val cores=Runtime.getRuntime().availableProcessors()
@@ -43,7 +44,7 @@ class LiveDiagnostics(
                     val (frames,dropped)=synchronized(samples){(samples.toList() to lost).also{samples.clear();lost=0}}
                     val slow=refresh?.let{rate->frames.count{it>1000/rate}}
                     val thread=worker()
-                    val stack=thread?.stackTrace?.take(12)?.joinToString("\n"){"  ${it.className}.${it.methodName}${if(it.isNativeMethod)" [原生方法]" else ""}"} ?: "  工作线程尚未启动"
+                    val stack=if(!readDetails)"  展开详情后采样" else thread?.stackTrace?.take(12)?.joinToString("\n"){"  ${it.className}.${it.methodName}${if(it.isNativeMethod)" [原生方法]" else ""}"} ?: "  工作线程尚未启动"
                     val thermal=if(Build.VERSION.SDK_INT>=29){val pm=context.getSystemService(Context.POWER_SERVICE) as PowerManager;arrayOf("正常","轻度","中度","严重","临界","紧急","关机保护").getOrElse(pm.currentThermalStatus){"未知"}}else "系统不提供"
                     val summary=buildString {
                         append("当前设备 · 安卓 ${Build.VERSION.RELEASE}\n系统接口级别 ${Build.VERSION.SDK_INT}\n")
@@ -63,7 +64,9 @@ class LiveDiagnostics(
                         append("\n工作线程调用栈\n$stack\n\n仅托管线程采样，原生库内部栈不可见。\n")
                         append("\n最近错误\n${recentFailure ?: "本次会话暂无错误"}")
                     }
-                    Snapshot(summary,details)
+                    Snapshot(summary,details,EditorPresentation.stage(phase.lineSequence().firstOrNull().orEmpty()),listOf(
+                        usage?.let{number(it.capacityPercent)+"%"}?:"—",number(mem.totalPss/1024.0)+" MB",thermal,
+                        mib(system.availMem)+" MB"+if(system.lowMemory)"\n内存紧张" else ""))
                 }
                 publish(snapshot)
             }
