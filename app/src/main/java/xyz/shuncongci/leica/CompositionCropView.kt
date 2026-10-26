@@ -30,6 +30,8 @@ class CompositionCropView(context:Context):View(context) {
     }
     private fun motionEnabled()=active && isAttachedToWindow && windowVisibility==VISIBLE && ValueAnimator.areAnimatorsEnabled()
     fun setPhoto(bitmap:Bitmap,w:Int,h:Int){
+        // An SDR hardware-layer cache must not flatten the HDR display bitmap.
+        setLayerType(if(HdrPreview.hasGainmap(bitmap))LAYER_TYPE_NONE else LAYER_TYPE_HARDWARE,null)
         photo=bitmap
         if(scene?.mesh?.width!=w || scene?.mesh?.height!=h){
             scene=CompositionTileMotion(w,h).also{if(analysing)it.beginAnalysis()}

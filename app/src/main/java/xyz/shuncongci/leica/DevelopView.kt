@@ -54,9 +54,10 @@ class DevelopView(context:Context):View(context) {
     private var closed=false
     init{visibility=GONE;isClickable=true;contentDescription="生成过程的显示动画，不改变照片；完成效果仅在真实结果就绪后呈现。"}
     val presenting get()=motion.visible
+    val hdrContent get()=HdrPreview.hasGainmap(source) || HdrPreview.hasGainmap(finalPhoto)
     private fun animated()=active && isAttachedToWindow && windowVisibility==VISIBLE && ValueAnimator.areAnimatorsEnabled()
     fun beginSource(bitmap:Bitmap){
-        check(!closed);reset();source=checkNotNull(bitmap.copy(Bitmap.Config.ARGB_8888,false));samplePalette(source!!,sourcePalette);sourcePalette.copyInto(palette);for(i in 0..15){oldFilters[i]=PorterDuffColorFilter(sourcePalette[i],PorterDuff.Mode.SRC_IN);colorFilters[i]=oldFilters[i]}
+        check(!closed);reset();source=HdrPreview.copy(bitmap);samplePalette(source!!,sourcePalette);sourcePalette.copyInto(palette);for(i in 0..15){oldFilters[i]=PorterDuffColorFilter(sourcePalette[i],PorterDuff.Mode.SRC_IN);colorFilters[i]=oldFilters[i]}
     }
     private fun samplePalette(b:Bitmap,destination:IntArray=palette){for(i in destination.indices){val x=((.12f+.76f*((i*7)%16)/15)*b.width).toInt().coerceIn(0,b.width-1);val y=((.12f+.76f*((i*11)%16)/15)*b.height).toInt().coerceIn(0,b.height-1);destination[i]=b.getPixel(x,y) or (255 shl 24)}}
     fun accept(event:DevelopEvent){
@@ -81,7 +82,7 @@ class DevelopView(context:Context):View(context) {
     fun finish(bitmap:Bitmap,rendered:Boolean,done:(Boolean)->Unit){
         if(closed){done(false);return};if(source==null){done(true);return}
         check(!completion.pending)
-        finalPhoto?.recycle();finalPhoto=checkNotNull(bitmap.copy(Bitmap.Config.ARGB_8888,false));completion.await(done)
+        finalPhoto?.recycle();finalPhoto=HdrPreview.copy(bitmap);completion.await(done)
         motion.resultCompleted(rendered);sync()
     }
     fun setActive(value:Boolean){active=value;if(!value){stop();motion.reduceMotion()};sync()}

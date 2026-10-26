@@ -39,20 +39,21 @@ class NativeCompareTiles(private val context:Context,private val ready:()->Unit)
             }catch(e:Exception){propagateFatalCause(e);android.util.Log.w("LegendaryPreview","Native preview unavailable",e)}
         }
     }
-    fun request(dst:RectF,viewW:Int,viewH:Int){
-        if(closed || loading || width<=0 || height<=0 || dst.width()<=0)return
+    fun request(dst:RectF,viewW:Int,viewH:Int,originalDetail:Boolean=true,resultDetail:Boolean=true){
+        if(closed || loading || width<=0 || height<=0 || dst.width()<=0 || (!originalDetail && !resultDetail))return
         val d=PreviewViewport.Bounds(dst.left,dst.top,dst.right,dst.bottom)
         val w=width;val h=height;val rw=resultWidth;val rh=resultHeight
-        val ob=PreviewRegions.visible(w,h,d,viewW,viewH) ?: return
-        val rb=PreviewRegions.visible(rw,rh,d,viewW,viewH)
-        val os=PreviewRegions.sample(ob,w,d.w)
+        val ob=if(originalDetail)PreviewRegions.visible(w,h,d,viewW,viewH)else null
+        val rb=if(resultDetail)PreviewRegions.visible(rw,rh,d,viewW,viewH)else null
+        if(ob==null && rb==null)return
+        val os=if(ob!=null)PreviewRegions.sample(ob,w,d.w)else 1
         val rs=if(rb!=null)PreviewRegions.sample(rb,rw,d.w) else 1
         val key="$version:$ob:$os:$rb:$rs";if(key==lastKey)return
         val v=version;loading=true
         executor.execute{
             var o:Part?=null;var r:Part?=null
             try{
-                original?.let{o=Part(it.bitmap(ob,os),ob,it.width,it.height)}
+                if(ob!=null)original?.let{o=Part(it.bitmap(ob,os),ob,it.width,it.height)}
                 if(rb!=null)result?.let{r=Part(it.bitmap(rb,rs),rb,it.width,it.height)}
             }catch(e:Exception){propagateFatalCause(e);android.util.Log.w("LegendaryPreview","Tile read failed",e)}
             val next=Tile(o,r)

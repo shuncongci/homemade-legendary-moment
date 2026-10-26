@@ -93,13 +93,16 @@ class CompareView(context: Context) : View(context) {
         fit(base)
         inspection?.let{canvas.drawBitmap(it,null,dst,bmpPaint);return}
         val cropSave=canvas.save();canvas.clipRect(cropDst)
-        nativeTiles.request(dst,width,height)
-        if(picking || r==null || mode==Mode.ORIGINAL){canvas.drawBitmap(o ?: base,null,dst,bmpPaint);nativeTiles.draw(canvas,dst,false,bmpPaint)}
-        else if(o==null || mode==Mode.RESULT){canvas.drawBitmap(r,null,dst,bmpPaint);nativeTiles.draw(canvas,dst,true,bmpPaint)}
+        // Region decoding does not retain Ultra HDR gainmaps. Never cover HDR with SDR detail.
+        val originalDetail=HdrDisplayPolicy.nativeDetailAllowed(HdrPreview.hasGainmap(o ?: base))
+        val resultDetail=HdrDisplayPolicy.nativeDetailAllowed(HdrPreview.hasGainmap(r))
+        nativeTiles.request(dst,width,height,originalDetail,resultDetail)
+        if(picking || r==null || mode==Mode.ORIGINAL){canvas.drawBitmap(o ?: base,null,dst,bmpPaint);if(originalDetail)nativeTiles.draw(canvas,dst,false,bmpPaint)}
+        else if(o==null || mode==Mode.RESULT){canvas.drawBitmap(r,null,dst,bmpPaint);if(resultDetail)nativeTiles.draw(canvas,dst,true,bmpPaint)}
         else {
             val x=dividerX()
-            canvas.save();canvas.clipRect(0f,0f,x,height.toFloat());canvas.drawBitmap(o,null,dst,bmpPaint);nativeTiles.draw(canvas,dst,false,bmpPaint);canvas.restore()
-            canvas.save();canvas.clipRect(x,0f,width.toFloat(),height.toFloat());canvas.drawBitmap(r,null,dst,bmpPaint);nativeTiles.draw(canvas,dst,true,bmpPaint);canvas.restore()
+            canvas.save();canvas.clipRect(0f,0f,x,height.toFloat());canvas.drawBitmap(o,null,dst,bmpPaint);if(originalDetail)nativeTiles.draw(canvas,dst,false,bmpPaint);canvas.restore()
+            canvas.save();canvas.clipRect(x,0f,width.toFloat(),height.toFloat());canvas.drawBitmap(r,null,dst,bmpPaint);if(resultDetail)nativeTiles.draw(canvas,dst,true,bmpPaint);canvas.restore()
             canvas.drawLine(x,0f,x,height.toFloat(),linePaint)
             canvas.drawCircle(x,height/2f,12f*resources.displayMetrics.density,linePaint)
             canvas.drawText("原图",8f,24f*resources.displayMetrics.density,labelPaint)

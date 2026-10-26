@@ -35,7 +35,10 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
         val original: Bitmap, val result: Bitmap,
         val inferMs: Long, val totalMs: Long, val downscaled: Boolean, val fused: Boolean,
         val rendered: Boolean = false, val reason: String = "", val hardwareSummary: String = "", val stageSummary:String = "", val subjectProtected:Boolean=false, val hdrRecipe:HdrRecipe?=null, val hdrReady:Boolean=false, val hdrFallback:String="",
-    )
+    ) {
+        /** HDR display reads the immutable encoded companion; SDR export continues to read file (lossless PNG). */
+        val previewFile get()=HdrDisplayPolicy.resultFile(file,HdrResultStore.jpegFile(file),hdrReady)
+    }
 
     val memory = PhotoMemory(context)
     private val env: OrtEnvironment = OrtEnvironment.getEnvironment().also{it.setTelemetry(false)}
@@ -163,21 +166,8 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
 
     private fun decode(uri: Uri, sample: Int): Bitmap = PhotoPixels.decode(context,uri,sample)
 
-    /** Small, orientation-corrected preview for the picker step. */
-    fun loadPreview(uri: Uri): Bitmap {
-        val (w, h) = bounds(uri)
-        var sample = 1
-        while (max(w, h) / (sample * 2) >= LeicaSizes.PREVIEW_MAX_SIDE) sample *= 2
-        val bmp = decode(uri, sample)
-        val m = Matrix()
-        when (orientation(uri)) {
-            2 -> m.setScale(-1f, 1f); 3 -> m.setRotate(180f); 4 -> m.setScale(1f, -1f)
-            5 -> { m.setRotate(90f); m.postScale(-1f, 1f) }; 6 -> m.setRotate(90f)
-            7 -> { m.setRotate(-90f); m.postScale(-1f, 1f) }; 8 -> m.setRotate(-90f)
-            else -> return bmp
-        }
-        return Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true).also { if (it !== bmp) bmp.recycle() }
-    }
+    /** Small, orientation-corrected display; HDR companions retain their gainmaps. */
+    fun loadPreview(uri: Uri,expectHdr:Boolean=false): Bitmap = HdrPreview.load(context,uri,expectHdr)
 
     /** Automatic color-only photo: native pixels up to 50 MP; larger sources keep their ratio. */
     private fun decodeOriginal(uri: Uri, cancel: Cancel): Pair<Planes,Boolean> {
@@ -396,9 +386,11 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
     }
 
     /** Fast-version pipeline; only bokeh output size and UI progress are extended. */
-    fun process(uri: Uri, style: LeicaStyle, cancel: Cancel, blurEnabled: Boolean = false, point: LegendaryMath.Point? = null, aperture: Float = 2.8f, outputSize:BokehOutput=BokehOutput.SIZE_2048, colorEnabled:Boolean=true, renderSize:Pair<Int,Int>?=null, onVisual:((DevelopEvent)->Unit)?=null, subjectEnabled:Boolean=false, subjectPoints:List<LegendaryMath.Point> = emptyList(), hdrOutput:((Planes,LegendaryMath.Frame)->Unit)?=null, hdrRowsOutput:((Planes,HdrPixels)->Unit)?=null, progress: (String) -> Unit): Result {
+    fun process(uri: Uri, style: LeicaStyle, cancel: Cancel, blurEnabled: Boolean = false, point: LegendaryMath.Point? = null, aperture: Float = 2.8f, outputSize:BokehOutput=BokehOutput.SIZE_2048, colorEnabled:Boolean=true, renderSize:Pair<Int,Int>?=null, onVisual:((DevelopEvent)->Unit)?=null, subjectEnabled:Boolean=false, subjectPoints:List<LegendaryMath.Point> = emptyList(), hdrOutput:((Planes,LegendaryMath.Frame)->Unit)?=null, hdrRowsOutput:((Planes,HdrPixels)->Unit)?=null, hdrMode:HdrDevelopMode=HdrDevelopMode.AUTO, progress: (String) -> Unit): Result {
         require(hdrOutput==null || hdrRowsOutput==null){"HDR接收方式不能重复"}
-        val explicitHdr=hdrOutput!=null || hdrRowsOutput!=null
+        require(hdrMode!=HdrDevelopMode.SDR || (hdrOutput==null && hdrRowsOutput==null)){"SDR显影不能连接HDR接收器"}
+        val explicitHdr=hdrOutput!=null || hdrRowsOutput!=null || hdrMode.strict
+        hdrMode.requirePlatform(Build.VERSION.SDK_INT)
         require(!explicitHdr || Build.VERSION.SDK_INT>=34){"HDR需要Android14+"}
         val processingMode=ProcessingMode.from(colorEnabled,blurEnabled)
         val outputLabel=if(blurEnabled)outputSize.label else "原图像素（最高5000万）"
@@ -409,9 +401,9 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
         val t0=SystemClock.elapsedRealtime();hardwareReport.reset();cacheDir.mkdirs()
         var resultFile=File(cacheDir,"result-${java.util.UUID.randomUUID()}.png")
         var durableResult=false
-        val renderKey=listOf("252",uri,style.id,style.sha256,blurEnabled,point,aperture,outputSize,colorEnabled,renderSize,subjectEnabled,subjectPoints,subjectResolution.longEdge).joinToString("|")
+        val renderKey=hdrMode.renderKey(listOf("252-hdr-display",uri,style.id,style.sha256,blurEnabled,point,aperture,outputSize,colorEnabled,renderSize,subjectEnabled,subjectPoints,subjectResolution.longEdge).joinToString("|"))
         recovery?.beginRender(renderKey)
-        val sourceHdr=if(!explicitHdr)HdrAutoSource.detect(context,uri)else true
+        val sourceHdr=if(hdrOutput!=null || hdrRowsOutput!=null)true else hdrMode.wantsHdr{HdrAutoSource.detect(context,uri)}
         var streamedHdr:FileHdrPixels?=null;var ownedHdrFile:File?=null
         var hdrReady=false;var hdrFallback=""
         try {
@@ -591,6 +583,7 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
                 fallback(t)
               }finally{streamedHdr?.close();streamedHdr=null}
             }
+            hdrMode.requireOutput(hdrReady,hdrOutput!=null || hdrRowsOutput!=null)
             cancel.check();stage("7/7 成片 · ${w}×$h · 中央处理器")
             val row=ByteArray(w*3)
             NativePng(resultFile.outputStream(),w,h).use { png ->
@@ -601,7 +594,7 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
             timing.finish()
             val total=SystemClock.elapsedRealtime()-t0
             val actualReason=reason
-            val meta=mapOf("result.style" to style.id,"result.width" to w.toString(),"result.height" to h.toString(),"result.inferMs" to inferMs.toString(),"result.totalMs" to total.toString(),"result.downscaled" to prepared.downscaled.toString(),"result.color" to colorEnabled.toString(),"result.rendered" to rendered.toString(),"result.reason" to actualReason,"result.hardware" to hardwareReport.summary(),"result.timing" to timing.summary(),"result.subject" to (prepared.subject!=null && rendered).toString(),"result.hdr" to hdrReady.toString(),"result.fallback" to hdrFallback,"result.focus" to (point?.let{"${it.x},${it.y}"}?:""),"result.aperture" to aperture.toString(),"job.kind" to "","job.stage" to "7","job.label" to "成片已保存","ui.hasResult" to "true","ui.saved" to "false","ui.stale" to "false","ui.expanded" to "false")
+            val meta=mapOf("result.style" to style.id,"result.width" to w.toString(),"result.height" to h.toString(),"result.inferMs" to inferMs.toString(),"result.totalMs" to total.toString(),"result.downscaled" to prepared.downscaled.toString(),"result.color" to colorEnabled.toString(),"result.rendered" to rendered.toString(),"result.reason" to actualReason,"result.hardware" to hardwareReport.summary(),"result.timing" to timing.summary(),"result.subject" to (prepared.subject!=null && rendered).toString(),"result.hdr" to hdrReady.toString(),"result.hdrMode" to hdrMode.name,"result.fallback" to hdrFallback,"result.focus" to (point?.let{"${it.x},${it.y}"}?:""),"result.aperture" to aperture.toString(),"job.kind" to "","job.stage" to "7","job.label" to "成片已保存","ui.hasResult" to "true","ui.saved" to "false","ui.stale" to "false","ui.expanded" to "false")
             recovery?.let{session->
                 val from=resultFile
                 val blobs=linkedMapOf<String,(File)->Unit>("result" to {to->from.copyTo(to,true)})
@@ -610,7 +603,8 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
                 resultFile=checkNotNull(session.store.file("result"));durableResult=true
                 from.delete();HdrResultStore.remove(from)
             }
-            val origPreview=loadPreview(uri);val resultPreview=loadPreview(Uri.fromFile(resultFile))
+            val origPreview=loadPreview(uri,HdrAutoSource.detect(context,uri))
+            val resultPreview=try{loadPreview(Uri.fromFile(HdrDisplayPolicy.resultFile(resultFile,HdrResultStore.jpegFile(resultFile),hdrReady)),hdrReady)}catch(t:Throwable){origPreview.recycle();throw t}
             return Result(style,resultFile,w,h,origPreview,resultPreview,inferMs,total,prepared.downscaled,colorEnabled,rendered,actualReason,hardwareReport.summary(),timing.summary(),prepared.subject!=null && rendered,HdrRecipe(uri,style,rendered,point,aperture,outputSize,colorEnabled,w,h,prepared.subject!=null,subjectPoints.toList()),hdrReady,hdrFallback)
         }catch(t:Throwable){if(!durableResult){resultFile.delete();HdrResultStore.remove(resultFile)};throw t}
         finally{try{streamedHdr?.close()}finally{ownedHdrFile?.delete();closeSession()}}
@@ -621,7 +615,9 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
         fun v(key:String)=s.get("result.$key").orEmpty()
         val hdr=v("hdr")=="true"
         if(hdr){check(s.file("result-pair")==HdrResultStore.pairFile(f));check(s.file("result-jpeg")==HdrResultStore.jpegFile(f))}
-        return Result(LeicaStyle.fromId(v("style")),f,v("width").toInt(),v("height").toInt(),loadPreview(uri),loadPreview(Uri.fromFile(f)),v("inferMs").toLong(),v("totalMs").toLong(),v("downscaled")=="true",v("color")=="true",v("rendered")=="true",v("reason"),v("hardware"),v("timing"),v("subject")=="true",null,hdr,v("fallback"))
+        val original=loadPreview(uri,HdrAutoSource.detect(context,uri))
+        val preview=try{loadPreview(Uri.fromFile(HdrDisplayPolicy.resultFile(f,HdrResultStore.jpegFile(f),hdr)),hdr)}catch(t:Throwable){original.recycle();throw t}
+        return Result(LeicaStyle.fromId(v("style")),f,v("width").toInt(),v("height").toInt(),original,preview,v("inferMs").toLong(),v("totalMs").toLong(),v("downscaled")=="true",v("color")=="true",v("rendered")=="true",v("reason"),v("hardware"),v("timing"),v("subject")=="true",null,hdr,v("fallback"))
     }
 
     fun saveHdr(result:Result,crop:CompositionGeometry.Crop,size:Pair<Int,Int>,cancel:Cancel,progress:(String)->Unit):String {

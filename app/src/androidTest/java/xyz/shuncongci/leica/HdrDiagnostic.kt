@@ -46,6 +46,30 @@ object HdrDiagnostic {
             check(roundTrip("roundtrip.jpg",Bitmap.CompressFormat.JPEG,95)){"JPEG encoder dropped gainmap"}
             roundTrip("roundtrip.png",Bitmap.CompressFormat.PNG,100)
             roundTrip("roundtrip.webp",Bitmap.CompressFormat.WEBP_LOSSLESS,100)
+            // The exact production display decoder/copy/EXIF/crop helpers. This is NOT display acceptance.
+            val display=HdrPreview.load(context,android.net.Uri.fromFile(File(dir,"roundtrip.jpg")),true)
+            try {
+                check(HdrPreview.hasGainmap(display))
+                report.put("productionPreviewDecode",describe(display))
+                val displayCases=JSONArray()
+                for(exif in 1..8){
+                    val sourcePixel=display.getPixel(0,0)
+                    val copy=HdrPreview.copy(display)
+                    val oriented=HdrPreview.orient(copy,exif)
+                    val size=NativeImageMath.size(display.width,display.height,exif)
+                    check(oriented.width==size.first && oriented.height==size.second)
+                    val cropped=HdrPreview.crop(oriented,CompositionGeometry.Crop(.125,.125,.875,.875))
+                    try{check(cropped.hasGainmap());displayCases.put(describe(cropped).put("exif",exif))}finally{cropped.recycle()}
+                    check(!display.isRecycled && display.hasGainmap() && display.getPixel(0,0)==sourcePixel)
+                }
+                report.put("productionPreviewTransforms",displayCases).put("productionPreviewHelpersExecuted",true)
+            }finally{display.recycle()}
+            val sdr=Bitmap.createBitmap(16,12,Bitmap.Config.ARGB_8888)
+            val sdrFile=File(dir,"preview-sdr.png")
+            try{sdrFile.outputStream().use{check(sdr.compress(Bitmap.CompressFormat.PNG,100,it))}}finally{sdr.recycle()}
+            var rejected=false
+            try{HdrPreview.load(context,android.net.Uri.fromFile(sdrFile),true).recycle()}catch(_:IllegalStateException){rejected=true}
+            check(rejected){"Expected-HDR preview silently accepted SDR"}
             val geometryCases=JSONArray()
             for(exif in 1..8){
                 val (uw,uh)=NativeImageMath.size(base.width,base.height,exif)

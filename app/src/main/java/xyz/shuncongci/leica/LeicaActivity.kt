@@ -56,6 +56,9 @@ class LeicaActivity:AppCompatActivity() {
     private lateinit var workflowPanel:LinearLayout;private lateinit var logPanel:LinearLayout
     private lateinit var compositionBack:OnBackPressedCallback
     private var photo:Uri?=null;private var current:LeicaEngine.Result?=null;private var sourceHdr=false
+    private var developMode=HdrDevelopMode.SDR
+    private lateinit var developActions:LinearLayout
+    private lateinit var sdrRunButton:StudioButton
     private var resultAppearance:CompositionAppearance?=null
     private lateinit var compositionButton:StudioButton
     private var cancel:Cancel?=null;private var job:Job?=null;private var ticker:Job?=null
@@ -253,9 +256,11 @@ class LeicaActivity:AppCompatActivity() {
         progressLabel=label("",11f,0xffd6cdbd.toInt()).apply{maxLines=2};actions.addView(progressLabel)
         elapsedLabel=label("",10f);actions.addView(elapsedLabel)
         pickButton=button("导入").apply{setOnClickListener{showPicker()}}
-        runButton=button("显影",true).apply{contentDescription="按当前参数生成成片";setOnClickListener{generate()}}
+        runButton=button("显影",true).apply{contentDescription="按当前参数生成成片";setOnClickListener{generate(if(HdrDisplayPolicy.splitActions(sourceHdr,workflow.onlyComposition))HdrDevelopMode.HDR else developMode)}}
+        sdrRunButton=button("SDR显影",true).apply{setOnClickListener{generate(HdrDevelopMode.SDR)}}
         saveButton=button("导出").apply{setOnClickListener{showExport()}}
-        actions.block(row(pickButton,runButton,saveButton),6)
+        developActions=row(pickButton,runButton,sdrRunButton,saveButton)
+        actions.block(developActions,6)
         resumeButton=button("恢复上次处理").apply{visibility=View.GONE;setOnClickListener{offerRecovery()}}
         actions.block(resumeButton,6)
         cancelButton=button("取消处理").apply{setOnClickListener{if(cancel!=null && !flow.cancelling){previewUpdates.discard();flow.cancel();cancel?.cancelled=true;engine.cancelRun();gaic.cancelRun();developView.skipPresentation();stageView.endLoading();compare.visibility=View.VISIBLE;progressMessage="正在取消 · 等待当前步骤退出";refresh()}}};actions.block(cancelButton,6);root.addView(actions)
@@ -296,8 +301,34 @@ class LeicaActivity:AppCompatActivity() {
         compare.mode=when(viewer){Viewer.RESULT->CompareView.Mode.RESULT;Viewer.COMPARE->CompareView.Mode.SLIDER;else->CompareView.Mode.ORIGINAL}
         compare.visibility=if(viewer==Viewer.RELIEF)View.INVISIBLE else View.VISIBLE
         if(viewer==Viewer.RELIEF)stageView.showRelief()else stageView.hide()
-        compare.animate().cancel();if(ValueAnimator.areAnimatorsEnabled()){compare.alpha=.55f;compare.animate().alpha(1f).setDuration(240).start()}else compare.alpha=1f
+        compare.animate().cancel();updateHdrWindow()
+        if(ValueAnimator.areAnimatorsEnabled() && !visibleHdrPreview()){compare.alpha=.55f;compare.animate().alpha(1f).setDuration(240).start()}else compare.alpha=1f
         updateViewerLabels()
+    }
+    private fun visibleHdrPreview():Boolean {
+        if(composing)return HdrPreview.hasGainmap(compositionLoadingBitmap?:compositionLoaded?.bitmap)
+        val originals=viewer in listOf(Viewer.ORIGINAL,Viewer.COMPARE) || !flow.hasResult || flow.picking || flow.subjectPicking
+        val results=viewer in listOf(Viewer.RESULT,Viewer.COMPARE) && flow.hasResult && !flow.picking && !flow.subjectPicking
+        return HdrDisplayPolicy.windowHdr(android.os.Build.VERSION.SDK_INT,
+            !depthCalculating && !stageView.isLoading && viewer !in listOf(Viewer.GRAY,Viewer.THERMAL,Viewer.RELIEF),
+            originals,results,HdrPreview.hasGainmap(compare.original),HdrPreview.hasGainmap(compare.result))
+    }
+    private fun updateHdrWindow(){
+        if(!::compare.isInitialized)return
+        val hdr=if(::developView.isInitialized && developView.presenting)developView.hdrContent else visibleHdrPreview()
+        HdrPreview.configure(window,hdr && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED))
+    }
+    private fun updateDevelopActions(){
+        val split=HdrDisplayPolicy.splitActions(sourceHdr,workflow.onlyComposition)
+        sdrRunButton.visibility=if(split)View.VISIBLE else View.GONE
+        val visible=if(split)listOf(pickButton,runButton,sdrRunButton,saveButton)else listOf(pickButton,runButton,saveButton)
+        val weights=HdrDisplayPolicy.actionWeights(split)
+        visible.forEachIndexed{i,b->
+            val p=b.layoutParams as LinearLayout.LayoutParams
+            val margin=if(i==0)0 else dp(6)
+            if(p.weight!=weights[i] || p.marginStart!=margin){p.width=0;p.weight=weights[i];p.marginStart=margin;b.layoutParams=p}
+            b.setPadding(dp(if(split && (b===pickButton || b===saveButton))4 else 8),dp(9),dp(if(split && (b===pickButton || b===saveButton))4 else 8),dp(9))
+        }
     }
     private fun spaceToolsVisible()=EditorLayoutPolicy.showSpaceTools(viewer==Viewer.RELIEF,visual!=null,flow.parametersExpanded,composing,flow.busy,stageView.isLoading)
     private fun showSpaceFullscreen(){
@@ -318,10 +349,13 @@ class LeicaActivity:AppCompatActivity() {
             viewer==Viewer.RELIEF->if(flow.subjectReady && flow.blur)"主体保护 · 主体与焦平面对齐 · 单指旋转 / 双指缩放平移" else "空间 · 相对深度 · 单指旋转 / 双指缩放平移"
             viewer in listOf(Viewer.RESULT,Viewer.COMPARE)->"${viewer.label} · ${currentCropPlan().label()} · ${if(flow.saved)"已保存" else "未保存"}"
             else->"${viewer.label} · 光圈 ${flow.aperture}"
-        } + (if(viewer in listOf(Viewer.RESULT,Viewer.COMPARE) && resultAppearance?.color==true)" · ${resultAppearance?.style?.label}" else "") + if(flow.blur && flow.subjectEnabled && flow.subjectReady && viewer==Viewer.ORIGINAL)" · 主体保护" else ""
+        } + (if(viewer in listOf(Viewer.RESULT,Viewer.COMPARE) && resultAppearance?.color==true)" · ${resultAppearance?.style?.label}" else "") + (if(flow.blur && flow.subjectEnabled && flow.subjectReady && viewer==Viewer.ORIGINAL)" · 主体保护" else "") +
+            if(visibleHdrPreview())" · ${HdrPreview.label(compare)} · HDR预览缩放，非SDR细节瓦片" else if(viewer==Viewer.RESULT && flow.hasResult)" · SDR" else ""
+        updateHdrWindow()
     }
     private fun refresh(){
-        pickButton.isEnabled=!flow.busy;runButton.isEnabled=workflow.canStart(flow);saveButton.isEnabled=!flow.busy && flow.hasResult && !composing
+        updateDevelopActions()
+        pickButton.isEnabled=!flow.busy;runButton.isEnabled=workflow.canStart(flow);sdrRunButton.isEnabled=runButton.isEnabled;saveButton.isEnabled=!flow.busy && flow.hasResult && !composing
         compositionButton.isEnabled=!flow.busy && flow.hasPhoto
         processingButton.isEnabled=!flow.busy;processingButton.text=workflow.label
         colorControls.visibility=if(workflow.allowsColorSelection && !composing)View.VISIBLE else View.GONE
@@ -364,8 +398,13 @@ class LeicaActivity:AppCompatActivity() {
         compare.focusPicking=flow.picking;compare.focusPoint=if(flow.blur)flow.focus else null;compare.showFocusRegion=flow.blur && regionVisible && !flow.subjectPicking
         modeButtons.forEachIndexed{i,b->b.isEnabled=!flow.busy && flow.hasPhoto && (Viewer.entries[i] !in listOf(Viewer.RESULT,Viewer.COMPARE) || flow.hasResult)}
         emptyState.visibility=if(flow.hasPhoto)View.GONE else View.VISIBLE
-        runButton.text=when{workflow.onlyComposition || (workflow.composeAfter && current!=null && !flow.resultStale)->"选择构图";flow.operation==PhotoFlow.Operation.GENERATE->"显影中";flow.picking->"请点焦点";flow.hasPhoto && flow.blur && flow.focus==null->"先选焦点";flow.blur && flow.subjectEnabled && !flow.subjectReady->"先计算保护";flow.subjectPicking->"请结束选点";workflow.composeAfter->"显影并构图";flow.hasResult->"重新显影";else->"显影"}
-        runButton.contentDescription=runButton.text
+        val actionLabel=when{workflow.onlyComposition || (HdrDisplayPolicy.reuseForComposition(workflow.composeAfter,current!=null,flow.resultStale,developMode,current?.hdrReady==true))->"选择构图";flow.operation==PhotoFlow.Operation.GENERATE->"显影中";flow.picking->"请点焦点";flow.hasPhoto && flow.blur && flow.focus==null->"先选焦点";flow.blur && flow.subjectEnabled && !flow.subjectReady->"先计算保护";flow.subjectPicking->"请结束选点";workflow.composeAfter->"显影并构图";flow.hasResult->"重新显影";else->"显影"}
+        val split=HdrDisplayPolicy.splitActions(sourceHdr,workflow.onlyComposition)
+        runButton.text=if(split){if(flow.operation==PhotoFlow.Operation.GENERATE && developMode==HdrDevelopMode.HDR)"HDR显影中"else "HDR显影"}else actionLabel
+        sdrRunButton.text=if(flow.operation==PhotoFlow.Operation.GENERATE && developMode==HdrDevelopMode.SDR)"SDR显影中"else "SDR显影"
+        runButton.isSelected=split && developMode==HdrDevelopMode.HDR;sdrRunButton.isSelected=developMode==HdrDevelopMode.SDR
+        runButton.contentDescription=if(split)"HDR显影 · 保留HDR光能，失败不会转为SDR · $actionLabel"else actionLabel
+        sdrRunButton.contentDescription="SDR显影 · 使用SDR基底，不计算HDR重建 · $actionLabel"
         saveButton.text=if(flow.resultStale)"导出上次" else "导出"
         saveButton.contentDescription="导出成片；向上展开格式菜单，当前${if(current?.hdrReady?:sourceHdr)ExportMenuChoices.ULTRA_HDR_LABEL else flow.exportFormat.label}"
         cancelButton.visibility=if(flow.operation in listOf(PhotoFlow.Operation.GENERATE,PhotoFlow.Operation.FOCUS_PREVIEW,PhotoFlow.Operation.DEPTH,PhotoFlow.Operation.COMPOSITION,PhotoFlow.Operation.SAVE))View.VISIBLE else View.GONE
@@ -379,7 +418,7 @@ class LeicaActivity:AppCompatActivity() {
         compositionBack.isEnabled=composing
         compositionApply.isEnabled=composing && !flow.busy && compositionItems.isNotEmpty()
         compositionRetry.isEnabled=composing && !flow.busy
-        if(composing){pickButton.isEnabled=false;runButton.isEnabled=false;saveButton.isEnabled=false;modeButtons.forEach{it.isEnabled=false}}
+        if(composing){pickButton.isEnabled=false;runButton.isEnabled=false;sdrRunButton.isEnabled=false;saveButton.isEnabled=false;modeButtons.forEach{it.isEnabled=false}}
         for(i in 0 until compositionChoices.childCount){val v=compositionChoices.getChildAt(i);v.isEnabled=!flow.busy;v.isSelected=i==compositionSelected;v.setBackgroundColor(if(i==compositionSelected)0xff423d36.toInt()else 0xff242526.toInt())}
         if(composing && compositionItems.isNotEmpty() && !flow.busy)showCompositionSize()
         updateViewerLabels();updateProgress();persistEditor()
@@ -440,8 +479,8 @@ class LeicaActivity:AppCompatActivity() {
                 val prepared=withContext(dispatcher){
                     val imported=photoImports.import(uri){owner.ensureActive()}
                     val dimensions=PhotoPixels.inspect(applicationContext,imported).displaySize
-                    pending=engine.loadPreview(imported)
                     val hdr=HdrAutoSource.detect(applicationContext,imported)
+                    pending=engine.loadPreview(imported,hdr)
                     owner.ensureActive();Triple(imported,dimensions,hdr)
                 }
                 owner.ensureActive()
@@ -456,9 +495,9 @@ class LeicaActivity:AppCompatActivity() {
                     previewUpdates.discard();subjectWork.invalidate();interruptedKind="";lastEditorState=null
                     crop=CompositionGeometry.FULL;compare.crop=crop;sourceWidth=dimensions.first;sourceHeight=dimensions.second
                     clearDepthViews();developView.reset();stageView.setPhoto(bmp);compare.setSources(local,null);compare.original=bmp;pending=null;compare.result=null;compare.resetViewport();compare.focusOverlay=null;compare.subjectOverlay=null
-                    photo=local;sourceHdr=hdr;current=null;resultAppearance=null;flow.photoLoaded();viewer=Viewer.ORIGINAL;restored=true
+                    photo=local;sourceHdr=hdr;developMode=HdrDevelopMode.restore(null,hdr);current=null;resultAppearance=null;flow.photoLoaded();viewer=Viewer.ORIGINAL;restored=true
                     withContext(dispatcher){engine.clearDepthCache();engine.clearCache()}
-                    status.text="${if(sourceHdr)"HDR来源 · 生成时处理HDR，默认HDR导出"else "SDR来源 · SDR处理与导出"}。选成像方式后可手动点焦；也可直接打开深度视图。"
+                    status.text="${if(sourceHdr)"HDR来源 · 请选择「HDR显影」保留HDR，或「SDR显影」跳过HDR重建；显示效果取决于屏幕HDR能力"else "SDR来源 · SDR处理与导出"}。选成像方式后可手动点焦；也可直接打开深度视图。"
                 }
             }finally{pending?.recycle()}
         }
@@ -561,14 +600,17 @@ class LeicaActivity:AppCompatActivity() {
             }
         }
     }
-    private fun generate(){
+    private fun generate(requested:HdrDevelopMode=developMode){
         val uri=photo ?: return;if(!workflow.canStart(flow))return
-        if(workflow.onlyComposition || (workflow.composeAfter && current!=null && !flow.resultStale)){openComposition();return}
+        val choice=if(sourceHdr)requested else HdrDevelopMode.SDR
+        if(workflow.onlyComposition || HdrDisplayPolicy.reuseForComposition(workflow.composeAfter,current!=null,flow.resultStale,choice,current?.hdrReady==true)){openComposition();return}
+        check(choice!=HdrDevelopMode.AUTO)
+        if(developMode!=choice){developMode=choice;flow.parametersChanged()}
         val selectedWorkflow=workflow;val selectedStyle=flow.style
         val savedEditor=editorState();val resolution=flow.subjectResolution
         val blur=flow.blur;val subject=flow.subjectEnabled;val selectedPoints=flow.subjectPoints.toList();val color=flow.colorEnabled;val point=flow.focus;val ap=flow.aperture;val size=selectedWorkflow.output(outputSize)
         previewUpdates.discard()
-        operation(PhotoFlow.Operation.GENERATE,"准备${flow.processingMode.label}",afterSuccess={
+        operation(PhotoFlow.Operation.GENERATE,"准备${choice.name}显影 · ${flow.processingMode.label}",afterSuccess={
             if(selectedWorkflow.shouldOpenComposition(true,false)){
                 if(!blur || resultAppearance?.blur==true){pendingComposition=true;continueComposition()}
                 else status.text="${status.text}\n未自动进入构图：虚化未成功，请重新点选焦点。已有成片保留。"
@@ -577,13 +619,13 @@ class LeicaActivity:AppCompatActivity() {
             val c=checkNotNull(cancel)
             withContext(dispatcher){session.ui(savedEditor);engine.selectSubjects(uri,selectedPoints,point,resolution)}
             interruptedKind=""
-            compare.original?.let{developView.beginSource(it)}
+            compare.original?.let{developView.beginSource(it)};updateHdrWindow()
             val unpublished=DevelopTransfer<LeicaEngine.Result>{r->r.original.recycle();r.result.recycle();if(r.file.parentFile!=session.store.directory){r.file.delete();HdrResultStore.remove(r.file)}}
             try {
-            val result=withContext(dispatcher){engine.process(uri,selectedStyle,c,blur,point,ap,size,color,subjectEnabled=subject,subjectPoints=selectedPoints,renderSize=if(crop==CompositionGeometry.FULL)null else EditorCrop.renderPlan(sourceWidth,sourceHeight,crop,size,blur).let{it.workWidth to it.workHeight},onVisual={event->
+            val result=withContext(dispatcher){engine.process(uri,selectedStyle,c,blur,point,ap,size,color,subjectEnabled=subject,subjectPoints=selectedPoints,renderSize=if(crop==CompositionGeometry.FULL)null else EditorCrop.renderPlan(sourceWidth,sourceHeight,crop,size,blur).let{it.workWidth to it.workHeight},hdrMode=choice,onVisual={event->
                 runOnUiThread{
                     if(isDestroyed || isFinishing || cancel!==c || c.cancelled){event.dispose();return@runOnUiThread}
-                    stageView.hide();compare.visibility=View.INVISIBLE;developView.accept(event)
+                    stageView.hide();compare.visibility=View.INVISIBLE;developView.accept(event);updateHdrWindow()
                 }
             }){message->runOnUiThread{if(cancel===c)stage(message)}}.also{unpublished.offer(it)}}
             try{
@@ -595,13 +637,14 @@ class LeicaActivity:AppCompatActivity() {
                     developView.finish(result.result,result.rendered){completed->
                         if(cont.isActive){if(completed)cont.resume(Unit)else cont.cancel(CancellationException("已取消呈现"))}
                     }
+                    updateHdrWindow()
                     cont.invokeOnCancellation{runOnUiThread{if(cancel===c)developView.reset()}}
                 }
                 c.check();currentCoroutineContext().ensureActive()
             }catch(e:Exception){unpublished.close();throw e}
             check(unpublished.take()===result)
             current=result;resultAppearance=CompositionAppearance(color,result.rendered,point,ap,result.style);flow.generated();if(result.subjectProtected)flow.subjectCompleted()
-            stageView.setPhoto(result.original);compare.setSources(uri,Uri.fromFile(result.file));compare.original=result.original;compare.result=result.result;viewer=Viewer.RESULT
+            stageView.setPhoto(result.original);compare.setSources(uri,Uri.fromFile(result.previewFile));compare.original=result.original;compare.result=result.result;viewer=Viewer.RESULT
             withContext(dispatcher){engine.clearCache(result.file)}
             status.text="${currentCropPlan().label()} · ${result.reason}\n${HdrAutoPolicy.label(result.hdrReady,result.hdrFallback)}\n${result.hardwareSummary}\n${result.stageSummary}"
             }finally{unpublished.close()}
@@ -621,6 +664,9 @@ class LeicaActivity:AppCompatActivity() {
     private fun analyseComposition(){
         if(flow.busy || !composing)return
         val uri=current?.let{Uri.fromFile(it.file)}?:photo?:return
+        // Analysis still reads the existing SDR pixels; the display reads the true gainmap companion.
+        val hdrDisplay=current?.hdrReady?:sourceHdr
+        val displayUri=current?.let{Uri.fromFile(it.previewFile)}?:uri
         val fullW=current?.width?:sourceWidth;val fullH=current?.height?:sourceHeight
         val parent=CompositionGeometry.snapped(crop,fullW,fullH)
         val box=CompositionGeometry.pixels(parent,fullW,fullH)
@@ -636,26 +682,28 @@ class LeicaActivity:AppCompatActivity() {
             try {
                 val (data,items)=withContext(dispatcher){
                     val loaded=CompositionFiles.loadSource(applicationContext,uri,parent,c){decoded->
-                        val display=checkNotNull(decoded.copy(Bitmap.Config.ARGB_8888,false))
+                        val display=if(hdrDisplay)HdrPreview.crop(engine.loadPreview(displayUri,true),parent)else HdrPreview.copy(decoded)
                         runOnUiThread{
                             if(isDestroyed || isFinishing || cancel!==c || c.cancelled || !composing){display.recycle();return@runOnUiThread}
                             val old=compositionLoadingBitmap;compositionLoadingBitmap=display
-                            compositionPreview.setPhoto(display,box.w,box.h);old?.recycle()
+                            compositionPreview.setPhoto(display,box.w,box.h);old?.recycle();updateHdrWindow()
                         }
                     }.also{transfer.offer(it)}
                     loaded to gaic.analyse(applicationContext,loaded.image,loaded.sourceW,loaded.sourceH,budget,c)
                 }
                 c.check();currentCoroutineContext().ensureActive();check(transfer.take()===data)
                 compositionLoaded=data;compositionItems=items
-                compositionPreview.setPhoto(data.bitmap,data.sourceW,data.sourceH)
-                compositionLoadingBitmap?.recycle();compositionLoadingBitmap=null
+                val display=if(hdrDisplay)checkNotNull(compositionLoadingBitmap){"HDR构图预览尚未就绪，未用SDR替代"}else data.bitmap
+                compositionPreview.setPhoto(display,data.sourceW,data.sourceH)
+                if(!hdrDisplay){compositionLoadingBitmap?.recycle();compositionLoadingBitmap=null}
+                updateHdrWindow()
                 compositionPreview.showProposals(items.map{it.crop},0)
                 items.forEachIndexed{index,item->
                     val card=LinearLayout(this@LeicaActivity).apply{
                         gravity=Gravity.CENTER_VERTICAL;setPadding(dp(8),dp(8),dp(8),dp(8));isFocusable=true;isClickable=true
                         contentDescription=item.title;setOnClickListener{if(!flow.busy){compositionSelected=index;compositionPreview.selectProposal(index);refresh()}}
                     }
-                    card.addView(CompositionThumbnail(this@LeicaActivity,data.bitmap,item.crop),LinearLayout.LayoutParams(dp(80),dp(60)))
+                    card.addView(CompositionThumbnail(this@LeicaActivity,display,item.crop),LinearLayout.LayoutParams(dp(80),dp(60)))
                     card.addView(label(item.title,13f),LinearLayout.LayoutParams(0,WRAP_CONTENT,1f).apply{marginStart=dp(10)})
                     compositionChoices.block(card,6)
                 }
@@ -713,25 +761,18 @@ class LeicaActivity:AppCompatActivity() {
         val hdrResult=current
         operation(PhotoFlow.Operation.SAVE,"保存成片 · ${plan.label()} · $label"){
             val token=checkNotNull(cancel)
-            var actualHdr=keepHdr;var fallback=""
+            // Explicit HDR export either succeeds as HDR or reports failure. Never retry it as SDR.
             val location=withContext(dispatcher){
-              try {
                 if(keepHdr && hdrResult!=null)engine.saveHdr(hdrResult,plan.crop,plan.width to plan.height,token){message->runOnUiThread{if(cancel===token && !isDestroyed)status.text=message}}
                 else if(keepHdr)HdrPhotoExport.saveSource(applicationContext,uri,plan.crop,token,plan.width to plan.height)
                 else CompositionFiles.saveSource(applicationContext,uri,plan.crop,token,plan.width to plan.height,format)
-              }catch(t:Throwable){
-                if(!keepHdr || t !is HdrUnsupportedException)throw t
-                token.check();actualHdr=false;fallback=t.message?:"当前路径不支持HDR"
-                CompositionFiles.saveSource(applicationContext,uri,plan.crop,token,plan.width to plan.height,format)
-              }
             }
-            if(!actualHdr && keepHdr)sourceHdr=false
-            flow.saved();status.text="已保存 ${plan.label()} · ${if(actualHdr)"Ultra HDR JPEG"else format.label}${if(fallback.isNotEmpty())" · 已转 SDR：$fallback"else ""}\n$location";BlurToast.show(this@LeicaActivity,"成片已保存")
+            flow.saved();status.text="已保存 ${plan.label()} · $label\n$location";BlurToast.show(this@LeicaActivity,"成片已保存")
         }
     }
     private fun editorState():Map<String,String> = flow.snapshot()+mapOf(
         "workflow" to workflow.name,"output" to outputSize.name,"crop" to "${crop.l},${crop.t},${crop.r},${crop.b}",
-        "width" to sourceWidth.toString(),"height" to sourceHeight.toString(),"hdrSource" to sourceHdr.toString(),
+        "width" to sourceWidth.toString(),"height" to sourceHeight.toString(),"hdrSource" to sourceHdr.toString(),"hdrDevelop" to developMode.name,
         "viewer" to viewer.name,"status" to status.text.toString(),"region" to regionVisible.toString())
     private fun persistEditor(){
         if(!restored || flow.busy || photo==null || worker.isShutdown)return
@@ -756,11 +797,12 @@ class LeicaActivity:AppCompatActivity() {
                 workflow=state["workflow"]?.let{PhotoWorkflow.valueOf(it)}?:PhotoWorkflow.COLOR
                 outputSize=state["output"]?.let{BokehOutput.valueOf(it)}?:outputSize
                 state["crop"]?.split(",")?.map{it.toDouble()}?.let{crop=CompositionGeometry.Crop(it[0],it[1],it[2],it[3])}
-                val bmp=result?.original?:withContext(dispatcher){engine.loadPreview(uri)}
                 val dimensions=withContext(dispatcher){PhotoPixels.inspect(applicationContext,uri).displaySize}
-                sourceWidth=dimensions.first;sourceHeight=dimensions.second;sourceHdr=state["hdrSource"]=="true"
+                sourceWidth=dimensions.first;sourceHeight=dimensions.second;sourceHdr=withContext(dispatcher){HdrAutoSource.detect(applicationContext,uri)}
+                val bmp=result?.original?:withContext(dispatcher){engine.loadPreview(uri,sourceHdr)}
+                developMode=HdrDevelopMode.restore(state["hdrDevelop"],sourceHdr)
                 compare.original=bmp;compare.result=result?.result?:if(flow.hasResult)bmp else null
-                compare.setSources(uri,result?.let{Uri.fromFile(it.file)}?:if(flow.hasResult)uri else null)
+                compare.setSources(uri,result?.let{Uri.fromFile(it.previewFile)}?:if(flow.hasResult)uri else null)
                 stageView.setPhoto(bmp);compare.crop=crop
                 if(result!=null){
                     val meta=withContext(dispatcher){session.store.properties()}
@@ -797,8 +839,10 @@ class LeicaActivity:AppCompatActivity() {
             }.setNeutralButton("稍后",null).show()
     }
     override fun onPostResume(){super.onPostResume();continueComposition()}
-    override fun onResume(){super.onResume();if(::compositionPreview.isInitialized)compositionPreview.setActive(true);if(::developView.isInitialized)developView.setActive(true);if(::stageView.isInitialized)stageView.setActive(true);if(diagnosticsDialog?.isShowing==true)diagnostics.start(lifecycleScope,::publishDiagnostics)}
-    override fun onPause(){spaceFullscreen?.dismiss();spaceFullscreen=null;exportMenu?.dismiss();exportMenu=null;if(::compositionPreview.isInitialized)compositionPreview.setActive(false);if(::developView.isInitialized)developView.setActive(false);if(::stageView.isInitialized)stageView.setActive(false);if(::diagnostics.isInitialized)diagnostics.stop();super.onPause()}
+    // Lifecycle reaches RESUMED after onResume returns on Android 14+. Recheck after dispatch;
+    // updateHdrWindow still rejects a queued callback if the Activity was paused/destroyed meanwhile.
+    override fun onResume(){super.onResume();window.decorView.post{if(!isDestroyed)updateHdrWindow()};if(::compositionPreview.isInitialized)compositionPreview.setActive(true);if(::developView.isInitialized)developView.setActive(true);if(::stageView.isInitialized)stageView.setActive(true);if(diagnosticsDialog?.isShowing==true)diagnostics.start(lifecycleScope,::publishDiagnostics)}
+    override fun onPause(){HdrPreview.configure(window,false);spaceFullscreen?.dismiss();spaceFullscreen=null;exportMenu?.dismiss();exportMenu=null;if(::compositionPreview.isInitialized)compositionPreview.setActive(false);if(::developView.isInitialized)developView.setActive(false);if(::stageView.isInitialized)stageView.setActive(false);if(::diagnostics.isInitialized)diagnostics.stop();super.onPause()}
     override fun onConfigurationChanged(config:Configuration){exportMenu?.dismiss();exportMenu=null;super.onConfigurationChanged(config);spaceFullscreen?.resize();if(::editor.isInitialized)adaptChrome()}
     override fun onTrimMemory(level:Int){super.onTrimMemory(level);engine.memory.trim(level)}
     override fun onLowMemory(){super.onLowMemory();engine.memory.trim(15)}
