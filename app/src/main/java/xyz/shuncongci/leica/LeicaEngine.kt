@@ -233,8 +233,8 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
         return bmp
     }
 
-    private fun preview(p: Planes): Bitmap {
-        val (pw, ph) = LeicaSizes.previewSize(p.width, p.height)
+    private fun preview(p: Planes,maxSide:Int=LeicaSizes.PREVIEW_MAX_SIDE): Bitmap {
+        val (pw, ph) = LeicaSizes.previewSize(p.width, p.height,maxSide)
         return toBitmap(if (pw == p.width && ph == p.height) p else Resample.resize(p, pw, ph, Resample.Filter.BILINEAR))
     }
 
@@ -315,8 +315,6 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
         try { activeRun.cancel { it.setTerminate(true) } } catch (e: Exception) { propagateFatalCause(e) }
     }
 
-    private val BOKEH_ASSET="leica/legendary-1.0-arnet.fp16.onnx"
-    private val BOKEH_SHA="a3aa5fa6a0818f36dbfa4be4dd5471d874cea5981357b7aeb28919954e70d05c"
     private val DEPTH_ASSET="leica/legendary-1.0-depth-native-chunk64.fp32.onnx"
     private val DEPTH_SHA="eeb3e43a7ac9f11a720f5d20a69a18ed95332456700717e7f460fb4600a05eb5"
     private fun checkedSession(asset:String,hash:String):HardwareSession {
@@ -397,11 +395,13 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
         require(!blurEnabled || point != null) { "请先在原照片上点击焦点" }
         FullFrameOptics.checkAperture(aperture)
         val timing=StageTiming{SystemClock.elapsedRealtime()}
-        fun stage(message: String){timing.start(message.substringBefore(" · ").substringAfter(' '));memory.stage(message);progress(message);cancel.check()}
+        fun stage(message: String){timing.start(BokehProgress.key(message));memory.stage(message);progress(message);cancel.check()}
+        var bokehDetail="";var bokehReused=false
+        fun timingSummary()=timing.summary()+(if(bokehDetail.isBlank())""else "\n\n"+(if(bokehReused)"复用已完成虚化：以下为上次计算耗时\n"+bokehDetail.replace("已含在上方阶段中","上次已完成，本轮不重复计算")else bokehDetail))
         val t0=SystemClock.elapsedRealtime();hardwareReport.reset();cacheDir.mkdirs()
         var resultFile=File(cacheDir,"result-${java.util.UUID.randomUUID()}.png")
         var durableResult=false
-        val renderKey=hdrMode.renderKey(listOf("252-hdr-display",uri,style.id,style.sha256,blurEnabled,point,aperture,outputSize,colorEnabled,renderSize,subjectEnabled,subjectPoints,subjectResolution.longEdge).joinToString("|"))
+        val renderKey=hdrMode.renderKey(listOf("270-"+FourTileBokeh.NATURAL_ID+"-"+BokehRenderPolicy.ID+"-"+FullFrameOptics.ID+"-positive-v2",uri,recovery?.store?.blobName("source"),style.id,style.sha256,blurEnabled,point,aperture,outputSize,colorEnabled,renderSize,subjectEnabled,subjectPoints,subjectResolution.longEdge).joinToString("|"))
         recovery?.beginRender(renderKey)
         val sourceHdr=if(hdrOutput!=null || hdrRowsOutput!=null)true else hdrMode.wantsHdr{HdrAutoSource.detect(context,uri)}
         var streamedHdr:FileHdrPixels?=null;var ownedHdrFile:File?=null
@@ -415,7 +415,7 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
                 val sourceWidth=if(exif in 5..8)sh else sw;val sourceHeight=if(exif in 5..8)sw else sh
                 val requested=renderSize?:LeicaSizes.processingSize(sourceWidth,sourceHeight,blurEnabled,outputSize)
                 require(requested.first in 1..sourceWidth && requested.second in 1..sourceHeight){"输出尺寸超过来源像素"}
-                val (w,h)=if(blurEnabled)requested else LeicaSizes.colorSize(requested.first,requested.second)
+                val (w,h)=if(blurEnabled)BokehRenderPolicy.originalSize(requested.first,requested.second)else LeicaSizes.colorSize(requested.first,requested.second)
                 recovery?.stage(1,"读取完成")
                 val depthMap=if(blurEnabled){
                     analyzedDepth(uri,sourceWidth,sourceHeight,cancel){stage("2/7 $it")}
@@ -440,7 +440,7 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
                         val (gan,inferMs)=if(cached!=null)cached to (recovery?.store?.get("render.inferMs")?.toLongOrNull()?:0L)
                         else analyzeColor(uri,style,cancel).also{(pixels,ms)->recovery?.putPlanes("render.color",pixels,cancel,mapOf("render.inferMs" to ms.toString(),"job.stage" to "3","job.label" to "上色完成"))}
                         stage("4/7 融合 · ${w}×$h · 中央处理器")
-                        // Load full source only after color-model input/tensors/session are released.
+                        // Load full source only after color-model resources have been released.
                         val (original,downscaled)=work ?: decodeWorking(uri,cancel,outputSize,w to h)
                         check(original.width==w && original.height==h)
                         Triple(Fusion.fuse(original,Resample.resize(gan,w,h,Resample.Filter.BICUBIC,cancel),cancel),inferMs,downscaled)
@@ -464,116 +464,78 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
             val selectedFocus=prepared.focus;val inferMs=prepared.inferMs;val w=colored.width;val h=colored.height
             if(explicitHdr)require(!blurEnabled || selectedFocus!=null){"焦点不可靠，不能以未虚化成片代替HDR虚化结果"}
             val rendered=blurEnabled && selectedFocus!=null
-            val boundedHdr=!rendered && hdrOutput==null
             if(diagnostic!=null){
                 diagnostic.invoke("colored",LegendaryMath.rgb(colored))
                 selectedFocus?.let{diagnostic.invoke("focus",LegendaryMath.Frame(1,1,1,floatArrayOf(it)))}
             }
-            var diagnosticPass=0;var visualPass=0
-            // GAN inference is finished. Do not retain its ORT session alongside ARNet.
+            val split=BokehRenderPolicy.split(outputSize)
+            // Color inference is finished. No ARNet session is loaded by the layered renderer.
             closeSession()
-            // Reconstruct before rendering: HDR and SDR never execute sequential bokeh pipelines.
-            var sharpHdr:LegendaryMath.Frame?=null
+            // Source and rendered HDR stay as lossless Float32 rows, including bokeh.
             fun fallback(t:Throwable){
                 if(explicitHdr || !HdrAutoPolicy.canFallback(t))throw t
                 cancel.check();hdrFallback=(t.message?:"当前设备或资源不支持HDR").replace("未缩图/转SDR","本HDR阶段停止").replace("未缩图或转SDR","本HDR阶段停止")
                 stage("已转 SDR · $hdrFallback")
             }
             val cachedOutput=recovery?.planes("render.output",cancel)
-            if(cachedOutput!=null)hdrFallback=recovery?.store?.get("render.hdrFallback").orEmpty()
+            if(cachedOutput!=null){require(cachedOutput.width==w && cachedOutput.height==h);hdrFallback=recovery?.store?.get("render.hdrFallback").orEmpty();bokehDetail=recovery?.store?.get("render.bokehTiming").orEmpty();bokehReused=true}
             if(sourceHdr && cachedOutput==null)try{
                 require(!blurEnabled || selectedFocus!=null){"当前焦点不支持HDR虚化"}
-                stage("HDR · 源线性光与调色外观 · ${w}×$h")
-                if(boundedHdr){
-                    // Own the temporary separately from checkpoint blobs: pruning can never invalidate an open reader.
-                    val temp=File.createTempFile("hdr-linear-",".f32",cacheDir);ownedHdrFile=temp
-                    val cached=recovery?.store?.file("render.sharpHdr")
-                    if(cached!=null)HdrFloatFile.copy(cached,temp,cancel)else{
-                        HdrSource.decodeForColorToFile(context,uri,w,h,if(colorEnabled)colored else null,temp,cancel)
-                        recovery?.store?.update(blobs=mapOf("render.sharpHdr" to {f->HdrFloatFile.copy(temp,f,cancel)}))
-                    }
-                    streamedHdr=HdrFloatFile.open(temp)
-                    require(streamedHdr!!.w==w && streamedHdr!!.h==h)
-                }else{
-                    fun reconstruct():LegendaryMath.Frame = HdrSource.decodeForColor(context,uri,w,h,if(colorEnabled)colored else null,cancel)
-                    sharpHdr=recovery?.frame("render.sharpHdr",cancel) ?: reconstruct().also{recovery?.putFrame("render.sharpHdr",it,cancel)}
+                stage("HDR还原 · ${w}×$h")
+                val temp=File.createTempFile("hdr-linear-",".f32",cacheDir);ownedHdrFile=temp
+                val cached=recovery?.store?.file("render.sharpHdr")
+                if(cached!=null)HdrFloatFile.copy(cached,temp,cancel)else{
+                    HdrSource.decodeForColorToFile(context,uri,w,h,if(colorEnabled)colored else null,temp,cancel)
+                    recovery?.store?.update(blobs=mapOf("render.sharpHdr" to {f->HdrFloatFile.copy(temp,f,cancel)}))
                 }
-            }catch(t:Throwable){sharpHdr=null;streamedHdr?.close();streamedHdr=null;fallback(t)}
-            if(boundedHdr && cachedOutput!=null)streamedHdr=recovery?.store?.file("render.hdr")?.let{HdrFloatFile.open(it)}
-            var completedHdr:LegendaryMath.Frame?=if(cachedOutput!=null && !boundedHdr)recovery?.frame("render.hdr",cancel)else null
-            var unifiedSdr:Planes?=null
+                streamedHdr=HdrFloatFile.open(temp)
+                require(streamedHdr!!.w==w && streamedHdr!!.h==h)
+            }catch(t:Throwable){streamedHdr?.close();streamedHdr=null;fallback(t)}
+            if(cachedOutput!=null)streamedHdr=recovery?.store?.file("render.hdr")?.let{HdrFloatFile.open(it)}
             if(cachedOutput==null)recovery?.stage(5,"虚化准备完成")
-            val output=cachedOutput ?: ((if(rendered && sharpHdr!=null)try{
-                onVisual?.let{send->DevelopMath.focusTiles(depthMap!!,point!!,aperture,w,h,cancel,subjectMask=prepared.subject)?.let{tiles->
-                    cancel.check();send(DevelopEvent.BokehStart(point,tiles))
-                }}
-                stage("5/7 HDR统一虚化 · ${w}×$h · 单次生成SDR/HDR")
-                completedHdr=checkedSession(BOKEH_ASSET,BOKEH_SHA).use{bokeh->
-                    LegendaryMath.renderHdrCombined(colored,checkNotNull(sharpHdr),depthMap!!,selectedFocus!!,aperture,cancel,
-                        subjectMask=prepared.subject,checkpoint=recovery?.renderCheckpoint(),onSdr={unifiedSdr=it},progress={stage("6/7 $it · ${w}×$h")},
-                        onPass=onVisual?.let{send->{frame:LegendaryMath.Frame->
-                            val (pw,ph)=LeicaSizes.previewSize(frame.w,frame.h)
-                            val event=DevelopEvent.BokehPass(++visualPass,preview(LegendaryMath.planes(LegendaryMath.resize(frame,pw,ph,cancel=cancel))))
-                            try{cancel.check();send(event)}catch(e:Exception){event.dispose();throw e}
-                        }}){image,defocus->
-                        require(image.w<=w && image.h<=h){"HDR模型尺寸超过所选工作尺寸"}
-                        stage("6/7 HDR虚化模型 · ${image.w}×${image.h} · 第${++diagnosticPass}次")
-                        diagnostic?.invoke("arnet-$diagnosticPass-image",image)
-                        diagnostic?.invoke("arnet-$diagnosticPass-defocus",defocus)
-                        runFrames(bokeh,mapOf("image" to image,"defocus" to defocus),3,cancel).also{diagnostic?.invoke("arnet-$diagnosticPass-output",it)}
-                    }
-                }
-                sharpHdr=null // unified result owns the final light; release sharp source before encoding
-                checkNotNull(unifiedSdr)
-            }catch(t:Throwable){
-                // Only a failed unsupported HDR attempt may enter SDR. Successful HDR never runs it.
-                completedHdr=null;sharpHdr=null;fallback(t);unifiedSdr
-            }else null) ?: if(rendered){
+            val output=cachedOutput ?: (if(rendered){
                 onVisual?.let{send->
-                    DevelopMath.focusTiles(depthMap!!,point!!,aperture,w,h,cancel,subjectMask=prepared.subject)?.let{tiles->
-                        cancel.check();send(DevelopEvent.BokehStart(point,tiles))
-                    }
+                    val layout=BokehLayerReveal(w,h,split)
+                    val tiles=checkNotNull(DevelopMath.focusTiles(depthMap!!,point!!,aperture,w,h,cancel,subjectMask=prepared.subject,displayGrid=layout.cols to layout.rows))
+                    cancel.check();val event=DevelopEvent.RegionsStart(w,h,split,preview(colored,BokehPreview.MAX_SIDE),point,tiles)
+                    try{send(event)}catch(t:Throwable){event.dispose();throw t}
                 }
-                stage("5/7 虚化准备 · ${w}×$h · 中央处理器")
-                checkedSession(BOKEH_ASSET,BOKEH_SHA).use { bokeh ->
-                    val sdrRendered=LegendaryMath.render(colored,depthMap!!,selectedFocus!!,aperture,cancel,subjectMask=prepared.subject,checkpoint=recovery?.renderCheckpoint(),progress={sub->
-                        when {
-                            sub.contains("高光散景合成")->stage("6/7 高光合成 · ${w}×$h · 中央处理器")
-                            sub.contains("RGB成片转换")->stage("6/7 颜色转换 · ${w}×$h · 中央处理器")
-                            else->stage("5/7 虚化准备 · ${w}×$h · 中央处理器")
-                        }
-                    },onPass=onVisual?.let{send->{frame:LegendaryMath.Frame->
-                        cancel.check();val (pw,ph)=LeicaSizes.previewSize(frame.w,frame.h)
-                        val small=LegendaryMath.resize(frame,pw,ph,cancel=cancel)
-                        val event=DevelopEvent.BokehPass(++visualPass,preview(LegendaryMath.planes(small)))
-                        try{cancel.check();send(event)}catch(e:Exception){event.dispose();throw e}
-                        stage("6/7 虚化尺度回传 · 第${visualPass}次 · 中间预览，尚未完成高光合成")
-                    }}){image,defocus ->
-                        cancel.check();stage("6/7 虚化模型 · ${image.w}×${image.h} · 执行中")
-                        val pass=++diagnosticPass
-                        diagnostic?.invoke("arnet-$pass-image",image)
-                        diagnostic?.invoke("arnet-$pass-defocus",defocus)
-                        runFrames(bokeh,mapOf("image" to image,"defocus" to defocus),3,cancel).also { diagnostic?.invoke("arnet-$pass-output",it) }
-                    }
-                    sdrRendered
+                val source=streamedHdr
+                val target=source?.let{File.createTempFile("hdr-bokeh4-",".f32",cacheDir)}
+                val made=try{
+                    FourTileBokeh.renderNatural(colored,depthMap!!,selectedFocus!!,aperture,cancel,cacheDir,
+                        subjectMask=prepared.subject,sharp=source,hdrTarget=target,split=split,
+                        checkpoint=recovery?.let{RenderStepCache(it.store,renderKey,if(source==null)"sdr"else "hdr")},
+                        progress={stage("6/7 $it")},
+                        onPreview=onVisual?.let{send->{patch->cancel.check();send(DevelopEvent.RegionReady(patch))}},
+                        onReport={bokehDetail=it.summary()},
+                        onLayer={p->onVisual?.let{send->cancel.check();send(DevelopEvent.LayerProgress(p));cancel.check()}},
+                        onPart={done,total->stage("6/7 "+if(total>1)BokehProgress.label(done,total,"完成")else "虚化完成")})
+                }catch(t:Throwable){target?.delete();throw t}
+                if(source!=null){
+                    source.close();streamedHdr=null;ownedHdrFile?.delete();ownedHdrFile=target
+                    streamedHdr=HdrFloatFile.open(checkNotNull(target))
                 }
-            } else colored).also{out->
-                val light=completedHdr?:sharpHdr
+                made
+            }else colored).also{out->
                 val blobs=linkedMapOf<String,(File)->Unit>("render.output" to {f->CheckpointPixels.planes(f,out,cancel)})
-                if(light!=null)blobs["render.hdr"]={f->CheckpointPixels.frame(f,light,cancel)}
                 streamedHdr?.file?.let{from->blobs["render.hdr"]={f->HdrFloatFile.copy(from,f,cancel)}}
-                recovery?.store?.update(mapOf("job.stage" to "6","job.label" to "虚化与高光合成完成","render.hdrFallback" to hdrFallback),setOf("render.multiscale","render.sharpHdr"),blobs)
+                recovery?.store?.update(mapOf("job.stage" to "6","job.label" to "虚化与高光合成完成","render.bokehTiming" to bokehDetail,"render.hdrFallback" to hdrFallback),setOf("render.multiscale","render.sharpHdr"),blobs)
             }
-            if(completedHdr!=null || sharpHdr!=null || streamedHdr!=null){
+            if(streamedHdr!=null){
               try {
-                val renderedHdr=completedHdr?:sharpHdr
-                val pixels=streamedHdr ?: HdrPixels.of(checkNotNull(renderedHdr))
+                val pixels=checkNotNull(streamedHdr)
                 cancel.check()
-                // Row receiver borrows immutable pixels only during this call; retain via a lossless file, not an array.
                 if(hdrRowsOutput!=null)hdrRowsOutput(output,pixels)
-                else if(hdrOutput!=null)hdrOutput(output,checkNotNull(renderedHdr))else{
-                    stage("HDR · 按行缓存成片与JPEG · 不降低精度")
+                else if(hdrOutput!=null){
+                    // Explicit legacy diagnostic receiver requires a Frame; normal UI/export never uses this allocation.
+                    val frame=LegendaryMath.Frame(w,h,3,FloatArray(w*h*3));val row=FloatArray(w)
+                    for(c in 0..2)for(y in 0 until h){pixels.read(c,y,1,row,cancel);row.copyInto(frame.data,c*w*h+y*w)}
+                    hdrOutput(output,HdrMath.checked(frame))
+                }else{
+                    stage("HDR缓存")
                     HdrResultStore.write(HdrResultStore.pairFile(resultFile),output,pixels,cancel)
+                    stage("HDR编码")
                     HdrPairExport.encode(HdrResultStore.jpegFile(resultFile),output,pixels,cancel)
                     hdrReady=true
                 }
@@ -590,22 +552,26 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
                 for(y in 0 until h){cancel.check();for(x in 0 until w){val i=y*w+x;val at=x*3;row[at]=output.p0[i];row[at+1]=output.p1[i];row[at+2]=output.p2[i]};png.row(row)}
             }
             cancel.check()
-            val reason=(if(colorEnabled)"${style.label} · " else "") + if(!blurEnabled)"仅调色 · ${w}×$h · $outputLabel" else if(!rendered)(if(colorEnabled)"焦点深度不可靠；已上色但未虚化，请在目标内部重新点选。" else "焦点深度不可靠；未调色且未虚化，请在目标内部重新点选。") else "${processingMode.label} · ${outputSize.label} · 光圈 $aperture · ${if(prepared.subject!=null)"主体保护 · 背景虚化" else "整图虚化"}"
+            val reason=(if(colorEnabled)"${style.label} · " else "") + if(!blurEnabled)"仅调色 · ${w}×$h · $outputLabel" else if(!rendered)(if(colorEnabled)"焦点深度不可靠；已上色但未虚化，请在目标内部重新点选。" else "焦点深度不可靠；未调色且未虚化，请在目标内部重新点选。") else "${processingMode.label} · ${if(split)"基础虚化四块 · 全局高光"else "整幅虚化 · 全局高光"} · ${outputSize.label} · ${w}×$h · 光圈 $aperture · ${if(prepared.subject!=null)"主体保护 · 背景虚化" else "整图虚化"}"
             timing.finish()
             val total=SystemClock.elapsedRealtime()-t0
             val actualReason=reason
-            val meta=mapOf("result.style" to style.id,"result.width" to w.toString(),"result.height" to h.toString(),"result.inferMs" to inferMs.toString(),"result.totalMs" to total.toString(),"result.downscaled" to prepared.downscaled.toString(),"result.color" to colorEnabled.toString(),"result.rendered" to rendered.toString(),"result.reason" to actualReason,"result.hardware" to hardwareReport.summary(),"result.timing" to timing.summary(),"result.subject" to (prepared.subject!=null && rendered).toString(),"result.hdr" to hdrReady.toString(),"result.hdrMode" to hdrMode.name,"result.fallback" to hdrFallback,"result.focus" to (point?.let{"${it.x},${it.y}"}?:""),"result.aperture" to aperture.toString(),"job.kind" to "","job.stage" to "7","job.label" to "成片已保存","ui.hasResult" to "true","ui.saved" to "false","ui.stale" to "false","ui.expanded" to "false")
+            val meta=mapOf("result.style" to style.id,"result.width" to w.toString(),"result.height" to h.toString(),"result.inferMs" to inferMs.toString(),"result.totalMs" to total.toString(),"result.downscaled" to prepared.downscaled.toString(),"result.color" to colorEnabled.toString(),"result.rendered" to rendered.toString(),"result.reason" to actualReason,"result.hardware" to hardwareReport.summary(),"result.timing" to timingSummary(),"result.subject" to (prepared.subject!=null && rendered).toString(),"result.hdr" to hdrReady.toString(),"result.hdrMode" to hdrMode.name,"result.fallback" to hdrFallback,"result.focus" to (point?.let{"${it.x},${it.y}"}?:""),"result.aperture" to aperture.toString(),"job.kind" to "","job.stage" to "7","job.label" to "成片已保存","ui.hasResult" to "true","ui.saved" to "false","ui.stale" to "false","ui.expanded" to "false")
+            stage("7/7 保存交接")
             recovery?.let{session->
                 val from=resultFile
                 val blobs=linkedMapOf<String,(File)->Unit>("result" to {to->from.copyTo(to,true)})
                 if(hdrReady){blobs["result-pair"]={to->HdrResultStore.pairFile(from).copyTo(to,true)};blobs["result-jpeg"]={to->HdrResultStore.jpegFile(from).copyTo(to,true)}}
-                session.store.update(meta,session.store.keys().filter{it.startsWith("render.")}.toSet()+setOf("result","result-pair","result-jpeg"),blobs)
+                session.completeRender(renderKey,meta,blobs,cancel)
                 resultFile=checkNotNull(session.store.file("result"));durableResult=true
                 from.delete();HdrResultStore.remove(from)
             }
+            stage("7/7 成片预览")
             val origPreview=loadPreview(uri,HdrAutoSource.detect(context,uri))
             val resultPreview=try{loadPreview(Uri.fromFile(HdrDisplayPolicy.resultFile(resultFile,HdrResultStore.jpegFile(resultFile),hdrReady)),hdrReady)}catch(t:Throwable){origPreview.recycle();throw t}
-            return Result(style,resultFile,w,h,origPreview,resultPreview,inferMs,total,prepared.downscaled,colorEnabled,rendered,actualReason,hardwareReport.summary(),timing.summary(),prepared.subject!=null && rendered,HdrRecipe(uri,style,rendered,point,aperture,outputSize,colorEnabled,w,h,prepared.subject!=null,subjectPoints.toList()),hdrReady,hdrFallback)
+            timing.finish();val finalTotal=SystemClock.elapsedRealtime()-t0;val finalTiming=timingSummary()
+            try{recovery?.store?.update(mapOf("result.totalMs" to finalTotal.toString(),"result.timing" to finalTiming))}catch(t:Throwable){origPreview.recycle();resultPreview.recycle();throw t}
+            return Result(style,resultFile,w,h,origPreview,resultPreview,inferMs,finalTotal,prepared.downscaled,colorEnabled,rendered,actualReason,hardwareReport.summary(),finalTiming,prepared.subject!=null && rendered,HdrRecipe(uri,style,rendered,point,aperture,outputSize,colorEnabled,w,h,prepared.subject!=null,subjectPoints.toList()),hdrReady,hdrFallback)
         }catch(t:Throwable){if(!durableResult){resultFile.delete();HdrResultStore.remove(resultFile)};throw t}
         finally{try{streamedHdr?.close()}finally{ownedHdrFile?.delete();closeSession()}}
     }
@@ -620,16 +586,16 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
         return Result(LeicaStyle.fromId(v("style")),f,v("width").toInt(),v("height").toInt(),original,preview,v("inferMs").toLong(),v("totalMs").toLong(),v("downscaled")=="true",v("color")=="true",v("rendered")=="true",v("reason"),v("hardware"),v("timing"),v("subject")=="true",null,hdr,v("fallback"))
     }
 
-    fun saveHdr(result:Result,crop:CompositionGeometry.Crop,size:Pair<Int,Int>,cancel:Cancel,badge:Boolean=false,progress:(String)->Unit):String {
+    fun saveHdr(result:Result,crop:CompositionGeometry.Crop,size:Pair<Int,Int>,cancel:Cancel,badge:Boolean=false,metadataSource:File?=null,progress:(String)->Unit):String {
         require(Build.VERSION.SDK_INT>=34){"HDR需要Android14+"}
         check(result.hdrReady){"当前成片为SDR，不能伪造HDR"}
         progress("保存已生成HDR · 不重新调色或虚化")
         if(crop==CompositionGeometry.FULL && size==(result.width to result.height))
-            return HdrPairExport.publish(context,HdrResultStore.jpegFile(result.file),cancel,if(badge)size else null)
+            return HdrPairExport.publish(context,HdrResultStore.jpegFile(result.file),cancel,if(badge)size else null,metadataSource,size)
         val (sdr,hdr)=try{
             HdrResultStore.readRows(HdrResultStore.pairFile(result.file),result.width,result.height,cancel)
         }catch(t:IllegalArgumentException){if(!HdrAutoPolicy.canFallback(t))throw t;cancel.check();throw HdrUnsupportedException(t)}
-        return hdr.use{HdrPairExport.save(context,sdr,it,crop,size,cancel,badge)}
+        return hdr.use{HdrPairExport.save(context,sdr,it,crop,size,cancel,badge,metadataSource)}
     }
     /** Compatibility entry point shares the current user export policy; never copies a PNG under a JPEG name. */
     fun save(r:Result,format:ExportFormat=ExportPreferences.load(context),cancel:Cancel=Cancel()):String =

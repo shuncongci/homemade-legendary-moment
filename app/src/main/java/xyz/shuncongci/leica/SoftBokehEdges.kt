@@ -43,7 +43,7 @@ object SoftBokehEdges {
     /** Mutates and returns [light]. Only for frames owned by the caller. */
     internal fun softenInPlace(light:Frame,coc:Frame,cancel:Cancel):Frame {
         cancel.check()
-        require(light.channels==3 && coc.channels==1 && light.w==coc.w && light.h==coc.h)
+        require(light.channels in listOf(1,3) && coc.channels==1 && light.w==coc.w && light.h==coc.h)
         require(coc.data.all{it.isFinite()})
         val w=light.w;val h=light.h;val n=w*h
         if(coc.data.none{weight(it)>0f})return light
@@ -79,7 +79,7 @@ object SoftBokehEdges {
             pw[0]=0.0;pr[0]=0.0;pg[0]=0.0;pb[0]=0.0
             for(k in 0 until len){
                 val i=start+k*step;val a=wt[k].toDouble()
-                cw[k]=a;cr[k]=a*f.data[i];cg[k]=a*f.data[n+i];cb[k]=a*f.data[2*n+i]
+                cw[k]=a;cr[k]=a*f.data[i];if(f.channels==3){cg[k]=a*f.data[n+i];cb[k]=a*f.data[2*n+i]}
                 pw[k+1]=pw[k]+cw[k];pr[k+1]=pr[k]+cr[k];pg[k+1]=pg[k]+cg[k];pb[k+1]=pb[k]+cb[k]
             }
             // Prefix sums are complete before any write, so in-place output is safe.
@@ -88,11 +88,12 @@ object SoftBokehEdges {
                 val lo=k-hw[k].toDouble();val hi=k+hw[k].toDouble()
                 val mass=integral(pw,cw,len,hi)-integral(pw,cw,len,lo);if(mass<=1e-12)continue
                 val r=(integral(pr,cr,len,hi)-integral(pr,cr,len,lo))/mass
-                val g=(integral(pg,cg,len,hi)-integral(pg,cg,len,lo))/mass
-                val b=(integral(pb,cb,len,hi)-integral(pb,cb,len,lo))/mass
+                if(f.channels==3){val g=(integral(pg,cg,len,hi)-integral(pg,cg,len,lo))/mass
+                    val b=(integral(pb,cb,len,hi)-integral(pb,cb,len,lo))/mass
+                    f.data[n+i]=max(0f,f.data[n+i]+own*(g.toFloat()-f.data[n+i]))
+                    f.data[2*n+i]=max(0f,f.data[2*n+i]+own*(b.toFloat()-f.data[2*n+i]))
+                }
                 f.data[i]=max(0f,f.data[i]+own*(r.toFloat()-f.data[i]))
-                f.data[n+i]=max(0f,f.data[n+i]+own*(g.toFloat()-f.data[n+i]))
-                f.data[2*n+i]=max(0f,f.data[2*n+i]+own*(b.toFloat()-f.data[2*n+i]))
             }
         }
     }

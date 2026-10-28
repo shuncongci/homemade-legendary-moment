@@ -11,9 +11,13 @@ object FullFrameOptics {
     const val VIRTUAL_NEAR_MM=1200.0
     const val VIRTUAL_FAR_MM=30000.0
     fun checkAperture(n:Float){require(n.isFinite() && LegendaryMath.apertures.any{it==n}){"不支持的光圈"}}
+    const val ID="relative-depth-quadratic-v2"
+    /** Model depth is only relative. Compress the far range before the thin-lens equation;
+     * d² retains the 1.2m/30m virtual anchors but gives distant relative depths a wider
+     * acceptable band and near depths a shallower band. These are not measured metres. */
+    fun depthCoordinate(d:Float):Float {require(d.isFinite() && d in 0f..1f);return d*d}
     fun inverseDistance(d:Float):Double {
-        require(d.isFinite() && d in 0f..1f)
-        return 1/VIRTUAL_FAR_MM+d*(1/VIRTUAL_NEAR_MM-1/VIRTUAL_FAR_MM)
+        return 1/VIRTUAL_FAR_MM+depthCoordinate(d)*(1/VIRTUAL_NEAR_MM-1/VIRTUAL_FAR_MM)
     }
     fun virtualDistance(d:Float)=1/inverseDistance(d)
     fun sensorLong(w:Int,h:Int):Double {
@@ -38,12 +42,17 @@ object FullFrameOptics {
     }
     fun acceptableRadius(w:Int,h:Int)=(ACCEPTABLE_DIAMETER_MM*max(w,h)/(2*sensorLong(w,h))).toFloat()
     fun maxRadius(w:Int,h:Int)=radiusScale(1f,LegendaryMath.apertures.minOrNull()!!,w,h)
-    fun coc(depth:LegendaryMath.Frame,focus:Float,n:Float,w:Int,h:Int,cancel:Cancel):LegendaryMath.Frame {
-        cancel.check();require(depth.channels==1 && depth.data.all{it.isFinite() && it in 0f..1f})
-        val gain=radiusScale(focus,n,w,h)
-        val native=LegendaryMath.Frame(depth.w,depth.h,1,FloatArray(depth.size){(depth.data[it]-focus)*gain})
-        return LegendaryMath.resize(native,w,h,cancel=cancel).also{cancel.check()}
+    /** Transform on the native depth grid, then interpolate the signed optical field.
+     * Shared verbatim by preview, 3D focus lift and both SDR/HDR render paths. */
+    fun nativeCoc(depth:LegendaryMath.Frame,focus:Float,n:Float,w:Int,h:Int,cancel:Cancel):LegendaryMath.Frame {
+        cancel.check();require(depth.channels==1)
+        val gain=radiusScale(focus,n,w,h);val selected=depthCoordinate(focus)
+        return LegendaryMath.Frame(depth.w,depth.h,1,FloatArray(depth.size){
+            if(it%depth.w==0)cancel.check();(depthCoordinate(depth.data[it])-selected)*gain
+        })
     }
+    fun coc(depth:LegendaryMath.Frame,focus:Float,n:Float,w:Int,h:Int,cancel:Cancel):LegendaryMath.Frame =
+        LegendaryMath.resize(nativeCoc(depth,focus,n,w,h,cancel),w,h,cancel=cancel).also{cancel.check()}
     internal fun displayPixel(index:Int,displaySize:Int,outputSize:Int)=
         (((index+.5)*outputSize/displaySize).toInt()).coerceIn(0,outputSize-1)
     internal fun sample(f:LegendaryMath.Frame,x:Int,y:Int,w:Int,h:Int):Float {

@@ -29,10 +29,17 @@ internal object WideSubjectEdges {
             if(sigma>=3.0)return null
             return sums+smooth((3.0-sigma)/1.5)
         }
-        for(y in 0 until h){cancel.check();for(x in 0 until w){
+        for(top in 0 until h step 32){
+            val end=min(h,top+32);val range=EdgeBoxSums.mixed(a.data,w,top,end,cancel)?:continue
+            var mixed=0;for(y in top until end)for(x in range)if(a.data[y*w+x]>0f && a.data[y*w+x]<1f)mixed++
+            val area=(min(w-1,range.last+limit)-max(0,range.first-limit)+1).toLong()*(min(h,end+limit)-max(0,top-limit))
+            // Ray setup is only amortized on genuinely dense/wide bands; thin bands retain the direct walk.
+            val rays=if(mixed.toLong()*limit>6*area)EdgeRaySearch.find(a.data,w,h,top,end,range.first,range.last,limit,cancel)else null
+            for(y in top until end){cancel.check();for(x in range){
             val i=y*w+x;val t=a.data[i].toDouble();if(t<=0 || t>=1)continue
             var fi=-1;var bi=-1;var fd=0;var bd=0
-            search@ for(d in 1..limit){for((dx,dy) in directions){val xx=x+dx*d;val yy=y+dy*d;if(xx !in 0 until w || yy !in 0 until h)continue
+            if(rays!=null){val j=(y-top)*rays.span+x-rays.left;fi=rays.fg[j];bi=rays.bg[j];fd=rays.fd[j];bd=rays.bd[j]}
+            else search@ for(d in 1..limit){for((dx,dy) in directions){val xx=x+dx*d;val yy=y+dy*d;if(xx !in 0 until w || yy !in 0 until h)continue
                 val j=yy*w+xx
                 if(fi<0 && known(j,true)){fi=j;fd=d}
                 if(bi<0 && known(j,false)){bi=j;bd=d}
@@ -47,7 +54,7 @@ internal object WideSubjectEdges {
                 val target=(sourceValue+(1-t)*(b[c+3]-b[c])).coerceIn(0.0,255.0)
                 out.plane(c)[i]=Math.rint(prior+(target-prior)*confidence).toInt().coerceIn(0,255).toByte()
             }
-        }}
-        return out
+        }}}
+        cancel.check();return out
     }
 }

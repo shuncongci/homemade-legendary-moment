@@ -23,6 +23,14 @@ class EditSession(directory:File) {
         if(store.get("render.key")!=key){clearRender();store.update(mapOf("render.key" to key))}
         job("render")
     }
+    /** Publish a complete result and discard BOTH step blobs and their descriptors atomically.
+     * Clearing only blobs would leave a false 'complete step' on the next same-parameter run. */
+    fun completeRender(key:String,meta:Map<String,String>,blobs:Map<String,(File)->Unit>,cancel:Cancel){
+        cancel.check()
+        val remove=store.keys().filter{it.startsWith("render.")}.toSet()+store.properties().keys.filter{it.startsWith("render.")}+setOf("result","result-pair","result-jpeg")
+        val guarded=blobs.mapValues{(_,write)->{f:File->cancel.check();write(f);cancel.check()}}
+        if(!store.updateIf(mapOf("render.key" to key),meta,remove,guarded))throw java.util.concurrent.CancellationException("显影参数已变化，旧成片不再提交")
+    }
     fun planes(key:String,cancel:Cancel)=store.file(key)?.let{CheckpointPixels.planes(it,cancel)}
     fun frame(key:String,cancel:Cancel)=store.file(key)?.let{CheckpointPixels.frame(it,cancel)}
     fun putPlanes(key:String,value:Planes,cancel:Cancel,meta:Map<String,String> = emptyMap(),remove:Set<String> = emptySet())=
@@ -44,7 +52,7 @@ class EditSession(directory:File) {
     }
     fun clearSubjects(){store.update(remove=store.keys().filter{it.startsWith("subject.")}.toSet()+setOf("subject.identity","subject.points"))}
     private fun subjectPoints(points:List<Point>)=points.map(::subjectKey).sorted().joinToString(";")
-    companion object { fun subjectIdentity(resolution:Int,focus:Point?)="$resolution:${focus?.x?.toRawBits()}:${focus?.y?.toRawBits()}" }
+    companion object { fun subjectIdentity(resolution:Int,focus:Point?)="positive-v2:$resolution:${focus?.x?.toRawBits()}:${focus?.y?.toRawBits()}" }
     fun renderCheckpoint()=object:MultiscaleCheckpoint {
         override fun load():MultiscaleCheckpoint.State? {
             val frame=frame("render.multiscale",Cancel())?:return null

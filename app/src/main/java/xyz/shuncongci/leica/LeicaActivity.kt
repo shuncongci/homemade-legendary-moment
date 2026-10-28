@@ -62,6 +62,7 @@ class LeicaActivity:AppCompatActivity() {
     private var resultAppearance:CompositionAppearance?=null
     private lateinit var compositionButton:StudioButton
     private var cancel:Cancel?=null;private var job:Job?=null;private var ticker:Job?=null
+    private var lastExportMs:Long?=null
     private var completedGenerationMs:Long?=null;private var progressMessage="";private var phase="";private var phaseStarted=0L;private var started=0L
     private var outputSize=BokehOutput.SIZE_2048;private var regionVisible=true
     private enum class Viewer(val label:String){ORIGINAL("原图"),GRAY("黑白深度"),THERMAL("伪彩深度"),RELIEF("空间"),RESULT("成片"),COMPARE("对比")}
@@ -92,6 +93,14 @@ class LeicaActivity:AppCompatActivity() {
     private var lastViewer:Viewer?=null
     // Optional second notification while editing; main thread only, lives with this Activity.
     private var runtimeMonitor:RuntimeMonitor?=null
+    private val pendingPhoto=PendingPhotoImport()
+    private var pickerNotice:AlertDialog?=null
+    private var pendingMetadataImport:Uri?=null
+    private val metadataPermission=registerForActivityResult(ActivityResultContracts.RequestPermission()){granted->
+        val uri=pendingMetadataImport;pendingMetadataImport=null
+        if(granted && uri!=null && !isDestroyed)acceptPicked(uri,true)
+        else if(!isDestroyed)AlertDialog.Builder(this).setTitle("未读取脱敏副本").setMessage("完整保留照片原有GPS需允许读取照片位置信息；这不是获取手机实时位置。也可通过系统文件选择原文件。原图和上次编辑未改动。").setPositiveButton("知道了",null).show()
+    }
     private val monitorPermission=registerForActivityResult(ActivityResultContracts.RequestPermission()){granted->
         if(granted)setEditorMonitor(true)else {
             diagnosticsPanel?.syncNotification()
@@ -100,8 +109,8 @@ class LeicaActivity:AppCompatActivity() {
         }
     }
     private val photoImports by lazy{PhotoImports(applicationContext)}
-    private val documentPicker=registerForActivityResult(ActivityResultContracts.OpenDocument()){uri->if(uri!=null && !flow.busy)onPicked(uri)}
-    private val picker=registerForActivityResult(ActivityResultContracts.PickVisualMedia()){uri->if(uri!=null && !flow.busy)onPicked(uri)}
+    private val documentPicker=registerForActivityResult(ActivityResultContracts.OpenDocument()){uri->if(uri!=null)acceptPicked(uri)}
+    private val picker=registerForActivityResult(ActivityResultContracts.PickVisualMedia()){uri->if(uri!=null)acceptPicked(uri)}
     private fun dp(v:Int)=(v*resources.displayMetrics.density).toInt()
     private fun surface(color:String,radius:Int=8)=GradientDrawable().apply{setColor(Color.parseColor(color));cornerRadius=dp(radius).toFloat()}
     private fun label(value:String,size:Float=12f,color:Int=0xff9f9a92.toInt())=TextView(this).apply{text=value;textSize=size;setTextColor(color);setLineSpacing(dp(2).toFloat(),1f)}
@@ -126,6 +135,8 @@ class LeicaActivity:AppCompatActivity() {
     private fun showPicker(){if(flow.busy)return;AlertDialog.Builder(this).setTitle("导入照片").setItems(arrayOf("从文件选择","从相册选择")){_,i->if(i==0)documentPicker.launch(arrayOf("image/*"))else picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))}.show()}
     override fun onCreate(savedInstanceState:Bundle?){
         super.onCreate(savedInstanceState)
+        pendingMetadataImport=savedInstanceState?.getString("import.metadata")?.let(Uri::parse)
+        savedInstanceState?.getString("import.selected")?.let{pendingPhoto.offer(it,savedInstanceState.getBoolean("import.accepted"))}
         engine=LeicaEngine(applicationContext,recovery=session,depthBusy={busy->runOnUiThread{
             if(!isDestroyed && flow.busy){
                 depthCalculating=busy
@@ -172,7 +183,7 @@ class LeicaActivity:AppCompatActivity() {
         val imageArea=FrameLayout(this).apply{background=surface("#0D0E0F",6);clipToOutline=true}
         compare=CompareView(this);imageArea.addView(compare,FrameLayout.LayoutParams(MATCH_PARENT,MATCH_PARENT))
         stageView=DepthStageView(this).apply{visibility=View.GONE;onSubjectSettled={if(!isDestroyed && !isFinishing){applyViewer();refresh()}}};imageArea.addView(stageView,FrameLayout.LayoutParams(MATCH_PARENT,MATCH_PARENT))
-        developView=DevelopView(this);imageArea.addView(developView,FrameLayout.LayoutParams(MATCH_PARENT,MATCH_PARENT))
+        developView=DevelopView(this).apply{onPresentationChanged={if(!isDestroyed && !isFinishing){updateProgress();updateHdrWindow()}}};imageArea.addView(developView,FrameLayout.LayoutParams(MATCH_PARENT,MATCH_PARENT))
         compositionPreview=CompositionCropView(this).apply{visibility=View.GONE};imageArea.addView(compositionPreview,FrameLayout.LayoutParams(MATCH_PARENT,MATCH_PARENT))
         emptyState=LinearLayout(this).apply{
             orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER;setPadding(dp(22),dp(16),dp(22),dp(16));isClickable=true;isFocusable=true;contentDescription="选择照片";setOnClickListener{showPicker()}
@@ -213,7 +224,7 @@ class LeicaActivity:AppCompatActivity() {
                 if(!flow.busy && !composing && workflow.allowsColorSelection && flow.style!=style){
                     flow.selectStyle(style)
                     getPreferences(MODE_PRIVATE).edit().putString("color-style",style.id).apply()
-                    status.text=if(flow.hasResult)"已选择${style.label} · 点击「重新显影」应用；上次成片保留，保存不会偷偷重跑。" else "已选择${style.label} · 点击显影后应用。"
+                    status.text=if(flow.hasResult)"已选择${style.label} · 点击「重新显影」应用；上次成片保留，导出只保存现有成片。" else "已选择${style.label} · 点击显影后应用。"
                     refresh()
                 }
             }
@@ -240,7 +251,7 @@ class LeicaActivity:AppCompatActivity() {
         }}
         depthControls.block(subjectButton)
         subjectSelectButton=button("选择保护点").apply{setOnClickListener{
-            if(!flow.busy && flow.hasPhoto && flow.subjectEnabled){flow.chooseSubjects();viewer=Viewer.ORIGINAL;applyViewer();status.text=if(flow.subjectPicking)"连续轻点多个目标；蓝色数字为保护点，金色十字为唯一焦点。选点不触发推理，选好后统一计算。" else "已退出保护点选择；已有选择保留。";refresh();if(!flow.subjectPicking && flow.subjectReady)requestFocusPreview()}
+            if(!flow.busy && flow.hasPhoto && flow.subjectEnabled){flow.chooseSubjects();viewer=Viewer.ORIGINAL;applyViewer();status.text=if(flow.subjectPicking)"连续轻点多个目标；蓝色数字为保护点，金色十字为唯一焦点。选好后点击「统一计算」。" else "已退出保护点选择；已有选择保留。";refresh();if(!flow.subjectPicking && flow.subjectReady)requestFocusPreview()}
         }}
         subjectComputeButton=button("统一计算",true).apply{setOnClickListener{if(flow.canComputeSubjects)requestFocusPreview(computeSubject=true)}}
         subjectUndoButton=button("移除指定点").apply{setOnClickListener{showSubjectRemoval()}}
@@ -277,7 +288,7 @@ class LeicaActivity:AppCompatActivity() {
         actions=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(0,dp(6),0,dp(4))}
         progress=ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal).apply{max=7;progressTintList=android.content.res.ColorStateList.valueOf(0xffc4b8a6.toInt())};actions.addView(progress,LinearLayout.LayoutParams(MATCH_PARENT,dp(2)))
         progressLabel=label("导入照片后开始",11f,0xffd6cdbd.toInt()).apply{minLines=2;maxLines=2}
-        elapsedLabel=label("",10f).apply{minLines=1;maxLines=1}
+        elapsedLabel=label("",10f).apply{minLines=1;maxLines=2;isClickable=true;isFocusable=true;contentDescription="查看每块和各过程耗时";setOnClickListener{showProcessTiming()}}
         pickButton=button("导入").apply{setOnClickListener{showPicker()}}
         runButton=button("显影",true).apply{contentDescription="按当前参数生成成片";setOnClickListener{generate(if(HdrDisplayPolicy.splitActions(sourceHdr,workflow.onlyComposition))HdrDevelopMode.HDR else developMode)}}
         sdrRunButton=button("SDR显影",true).apply{setOnClickListener{generate(HdrDevelopMode.SDR)}}
@@ -447,7 +458,7 @@ class LeicaActivity:AppCompatActivity() {
         cancelButton.isEnabled=!flow.cancelling;cancelButton.text=if(flow.cancelling)"正在取消…" else "取消处理"
         progress.visibility=if(flow.busy)View.VISIBLE else View.INVISIBLE;progressLabel.visibility=View.VISIBLE
         elapsedLabel.visibility=if(completedGenerationMs!=null && !flow.busy)View.VISIBLE else View.INVISIBLE
-        completedGenerationMs?.let{elapsedLabel.text="显影用时 ${ProcessingTime.seconds(it)}${if(flow.resultStale)" · 参数待应用" else ""}"}
+        completedGenerationMs?.let{ms->val blocks=ProcessTimingText.compact(current?.stageSummary.orEmpty());elapsedLabel.text="显影 ${ProcessingTime.seconds(ms)} · 耗时明细 ›${if(flow.resultStale)" · 待应用"else ""}"+if(blocks.isBlank())""else "\n$blocks"}
         workflowPanel.visibility=if(composing)View.GONE else View.VISIBLE
         logPanel.visibility=if(composing)View.GONE else View.VISIBLE
         compositionPanel.visibility=if(composing)View.VISIBLE else View.GONE
@@ -499,11 +510,32 @@ class LeicaActivity:AppCompatActivity() {
         if(on)startEditorMonitor() else stopEditorMonitor()
         diagnosticsPanel?.syncNotification()
     }
-    private fun updateProgress(){if(::progressLabel.isInitialized)progressLabel.text=if(flow.busy)"${EditorPresentation.stage(progressMessage)} · ${ProcessingTime.seconds(SystemClock.elapsedRealtime()-phaseStarted)}"else when{!flow.hasPhoto->"导入 → 显影 → 导出";composing->"选择方案，再点应用";flow.resultStale->"参数已改 · 重新显影后导出";flow.hasResult->if(flow.saved)"成片已保存" else "成片已就绪 · 可导出";else->"选择参数，再点显影"}}
-    private fun stage(message:String){if(!flow.busy || isDestroyed)return;val key=message.substringBefore(" · ");if(key!=phase){phase=key;phaseStarted=SystemClock.elapsedRealtime()};progressMessage=message;if(composing)compositionInfo.text=message;val n=message.substringBefore('/').toIntOrNull();progress.isIndeterminate=n==null;if(n!=null)progress.progress=n;updateProgress()}
+    private fun updateProgress(){
+        if(!::progressLabel.isInitialized)return
+        progressLabel.text=if(flow.busy){
+            val actual="${EditorPresentation.stage(progressMessage)} · ${ProcessingTime.seconds(SystemClock.elapsedRealtime()-phaseStarted)}"
+            if(flow.operation==PhotoFlow.Operation.GENERATE && ::developView.isInitialized)developView.motion.statusText(actual)else actual
+        }else when{!flow.hasPhoto->"导入 → 显影 → 导出";composing->"选择方案，再点应用";flow.resultStale->"参数已改 · 重新显影后导出";flow.hasResult->if(flow.saved)"成片已保存" else "成片已就绪 · 可导出";else->"选择参数，再点显影"}
+    }
+    private fun showProcessTiming(){
+        if(flow.busy)return;val r=current?:return
+        val content=label(ProcessTimingText.details(r.totalMs,r.stageSummary,lastExportMs),13f).apply{setTextIsSelectable(true);setPadding(dp(20),dp(12),dp(20),dp(20))}
+        val scroll=ScrollView(this).apply{addView(content)}
+        AlertDialog.Builder(this).setTitle("耗时明细").setView(scroll).setPositiveButton("关闭",null).show()
+    }
+    private fun stage(message:String){
+        if(!flow.busy || isDestroyed)return
+        val key=BokehProgress.key(message);if(key!=phase){phase=key;phaseStarted=SystemClock.elapsedRealtime()}
+        progressMessage=message;if(composing)compositionInfo.text=message
+        val real=BokehProgress.bar(message)
+        if(real!=null){progress.isIndeterminate=false;progress.max=real.second;progress.progress=real.first}
+        else if(BokehProgress.owns(message)){progress.isIndeterminate=true}
+        else {val n=message.substringBefore('/').toIntOrNull();progress.isIndeterminate=n==null;if(n!=null){progress.max=7;progress.progress=n}}
+        updateProgress()
+    }
     private fun operation(op:PhotoFlow.Operation,message:String,afterSuccess:()->Unit={},action:suspend()->Unit){
         if(flow.busy)return
-        if(op==PhotoFlow.Operation.GENERATE || op==PhotoFlow.Operation.PREVIEW)completedGenerationMs=null
+        if(op==PhotoFlow.Operation.GENERATE || op==PhotoFlow.Operation.PREVIEW){completedGenerationMs=null;lastExportMs=null}
         cancel=if(op in listOf(PhotoFlow.Operation.GENERATE,PhotoFlow.Operation.FOCUS_PREVIEW,PhotoFlow.Operation.DEPTH,PhotoFlow.Operation.COMPOSITION,PhotoFlow.Operation.SAVE))Cancel()else null
         flow.begin(op);started=SystemClock.elapsedRealtime();phaseStarted=started;phase="";progressMessage=message;progress.isIndeterminate=true;refresh()
         ticker=lifecycleScope.launch{while(isActive){delay(1000);updateProgress()}}
@@ -523,11 +555,39 @@ class LeicaActivity:AppCompatActivity() {
                 cancel=null;ticker?.cancel();flow.finish();depthCalculating=false
                 if(op==PhotoFlow.Operation.GENERATE){developView.reset();compare.visibility=View.VISIBLE;compare.alpha=1f}
                 if(!lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED))stopEditorMonitor()
-                if(!isDestroyed && !isFinishing){if(leaveCompositionWhenIdle){leaveCompositionWhenIdle=false;closeComposition()};if(!stageView.isLoading)applyViewer();refresh();if(op==PhotoFlow.Operation.FOCUS_PREVIEW)refreshCachedSubjects();if(again)startFocusPreview();if(success)afterSuccess()}
+                if(!isDestroyed && !isFinishing){if(leaveCompositionWhenIdle){leaveCompositionWhenIdle=false;closeComposition()};if(!stageView.isLoading)applyViewer();refresh();if(op==PhotoFlow.Operation.FOCUS_PREVIEW)refreshCachedSubjects();if(again && pendingPhoto.pending==null)startFocusPreview();if(success)afterSuccess();window.decorView.post{drainPicked()}}
             }}
         }
     }
+    private fun acceptPicked(uri:Uri,renditionAccepted:Boolean=false){
+        pendingPhoto.offer(uri.toString(),renditionAccepted)
+        if(flow.busy)status.text="已选中照片，当前操作结束后自动导入。原图和上次编辑暂未改动。"
+        window.decorView.post{drainPicked()}
+    }
+    private fun drainPicked(){
+        if(isDestroyed || isFinishing || pickerNotice?.isShowing==true || pendingMetadataImport!=null)return
+        val next=pendingPhoto.ready(flow.busy,lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED))?:return
+        val uri=Uri.parse(next.uri)
+        if(PhotoImportPolicy.picker(uri.scheme,uri.authority,uri.pathSegments.firstOrNull()) && !next.renditionAccepted){
+            pickerNotice=AlertDialog.Builder(this).setTitle("相册选择器提供的照片")
+                .setMessage("系统相册可能隐藏照片的位置等信息。继续导入不会主动压缩图片，但无法找回已隐藏的信息。需要完整拍摄信息时，建议改用“从文件选择”。")
+                .setPositiveButton("继续导入"){_,_->pendingPhoto.offer(next.uri,true);pickerNotice=null;window.decorView.post{drainPicked()}}
+                .setNeutralButton("从文件选择"){_,_->pendingPhoto.clear();pickerNotice=null;documentPicker.launch(arrayOf("image/*"))}
+                .setNegativeButton("取消"){_,_->pendingPhoto.clear();pickerNotice=null}
+                .setOnCancelListener{pendingPhoto.clear();pickerNotice=null}.show()
+            return
+        }
+        pendingPhoto.clear();onPicked(uri)
+    }
+    override fun onSaveInstanceState(outState:Bundle){
+        outState.putString("import.metadata",pendingMetadataImport?.toString())
+        pendingPhoto.pending?.let{outState.putString("import.selected",it.uri);outState.putBoolean("import.accepted",it.renditionAccepted)}
+        super.onSaveInstanceState(outState)
+    }
     private fun onPicked(uri:Uri){
+        if(PhotoImportPolicy.original(android.os.Build.VERSION.SDK_INT,uri.scheme,uri.authority,uri.pathSegments.firstOrNull()) && checkSelfPermission(android.Manifest.permission.ACCESS_MEDIA_LOCATION)!=android.content.pm.PackageManager.PERMISSION_GRANTED){
+            pendingMetadataImport=uri;metadataPermission.launch(android.Manifest.permission.ACCESS_MEDIA_LOCATION);return
+        }
         operation(PhotoFlow.Operation.PREVIEW,"读取原图"){
             val owner=currentCoroutineContext()
             var pending:Bitmap?=null
@@ -733,7 +793,7 @@ class LeicaActivity:AppCompatActivity() {
         compositionLoadingBitmap?.recycle();compositionLoadingBitmap=null
         compositionItems=emptyList();compositionChoices.removeAllViews();compositionSelected=0
         compositionPreview.beginAnalysis()
-        operation(PhotoFlow.Operation.COMPOSITION,"分析当前画面 · GAIC纯模型评分"){
+        operation(PhotoFlow.Operation.COMPOSITION,"正在分析当前画面的构图"){
             val c=checkNotNull(cancel)
             val transfer=DevelopTransfer<CompositionFiles.Loaded>{it.bitmap.recycle()}
             try {
@@ -808,7 +868,7 @@ class LeicaActivity:AppCompatActivity() {
             if(!flow.busy && !isDestroyed && !isFinishing){flow.selectExportFormat(format);ExportPreferences.save(this,format);save(keepHdr=false)}
         },sourceHdr=current?.hdrReady?:sourceHdr,hdrUnavailableReason=null,exportHdr={
             if(!flow.busy && !isDestroyed && !isFinishing)save(keepHdr=true)
-        },badge=ExportPreferences.badge(this),badgeChanged={on->if(!isDestroyed){ExportPreferences.saveBadge(this,on);refresh()}})
+        },badge=ExportPreferences.badge(this),badgeChanged={on->if(!isDestroyed){ExportPreferences.saveBadge(this,on);refresh()}},preserveMetadata=true)
     }
     private fun save(keepHdr:Boolean=current?.hdrReady?:sourceHdr){
         if(flow.busy || !flow.hasResult || composing)return
@@ -821,18 +881,21 @@ class LeicaActivity:AppCompatActivity() {
         operation(PhotoFlow.Operation.SAVE,"保存成片 · ${plan.label()} · $label"){
             val token=checkNotNull(cancel)
             // Explicit HDR export either succeeds as HDR or reports failure. Never retry it as SDR.
+            val saveStarted=SystemClock.elapsedRealtime()
             val location=withContext(dispatcher){
-                if(keepHdr && hdrResult!=null)engine.saveHdr(hdrResult,plan.crop,plan.width to plan.height,token,badge){message->runOnUiThread{if(cancel===token && !isDestroyed)status.text=message}}
-                else if(keepHdr)HdrPhotoExport.saveSource(applicationContext,uri,plan.crop,token,plan.width to plan.height,badge=badge)
-                else CompositionFiles.saveSource(applicationContext,uri,plan.crop,token,plan.width to plan.height,format,badge)
+                val metadataSource=checkNotNull(session.source()){"原图元数据来源已失效"}
+                if(keepHdr && hdrResult!=null)engine.saveHdr(hdrResult,plan.crop,plan.width to plan.height,token,badge,metadataSource){message->runOnUiThread{if(cancel===token && !isDestroyed)status.text=message}}
+                else if(keepHdr)HdrPhotoExport.saveSource(applicationContext,uri,plan.crop,token,plan.width to plan.height,badge=badge,metadataSource=metadataSource)
+                else CompositionFiles.saveSource(applicationContext,uri,plan.crop,token,plan.width to plan.height,format,badge,metadataSource)
             }
+            lastExportMs=(SystemClock.elapsedRealtime()-saveStarted).coerceAtLeast(0)
             flow.saved();status.text="已保存 ${plan.label()} · $label\n$location";BlurToast.show(this@LeicaActivity,"成片已保存")
         }
     }
     private fun editorState():Map<String,String> = flow.snapshot()+mapOf(
         "workflow" to workflow.name,"output" to outputSize.name,"crop" to "${crop.l},${crop.t},${crop.r},${crop.b}",
         "width" to sourceWidth.toString(),"height" to sourceHeight.toString(),"hdrSource" to sourceHdr.toString(),"hdrDevelop" to developMode.name,
-        "viewer" to viewer.name,"status" to status.text.toString(),"region" to regionVisible.toString())
+        "viewer" to viewer.name,"exportMs" to (lastExportMs?.toString()?:""),"status" to status.text.toString(),"region" to regionVisible.toString())
     private fun persistEditor(){
         if(!restored || flow.busy || photo==null || worker.isShutdown)return
         val state=editorState();if(state==lastEditorState)return
@@ -870,6 +933,7 @@ class LeicaActivity:AppCompatActivity() {
                     completedGenerationMs=result.totalMs
                 }
                 viewer=if(flow.hasResult)Viewer.RESULT else Viewer.ORIGINAL
+                lastExportMs=state["exportMs"]?.toLongOrNull()?.takeIf{it>=0}
                 regionVisible=state["region"]!="false"
                 val restoredTicket=flow.subjectTicket();val restoredFocus=flow.focus;val restoredResolution=flow.subjectResolution
                 val done=withContext(dispatcher){engine.selectSubjects(uri,restoredTicket.points,restoredFocus,restoredResolution);engine.completedSubjects(uri,restoredTicket.points)}
@@ -883,7 +947,7 @@ class LeicaActivity:AppCompatActivity() {
         if(flow.busy || interruptedKind.isEmpty())return
         val kind=interruptedKind
         AlertDialog.Builder(this).setTitle("恢复上次处理")
-            .setMessage("只保留这一份最新进度。继续会复用已完成的步骤和保护点；中断中的步骤会重新执行。重新开始会清除本次中间计算，原片和已完成成片保留。")
+            .setMessage("只保留这一份最新进度。继续会复用已保存的准备、完整基础区域、光能提取／全局散射、合成步骤和保护点；中断中的内部行或层会重算。照片或参数变化会重新计算。重新开始只清除本次中间计算，原片和已完成成片保留。")
             .setPositiveButton("继续"){_,_->
                 interruptedKind=""
                 if(kind=="subject")requestFocusPreview(computeSubject=true)else generate()
@@ -897,7 +961,7 @@ class LeicaActivity:AppCompatActivity() {
                 }
             }.setNeutralButton("稍后",null).show()
     }
-    override fun onPostResume(){super.onPostResume();continueComposition()}
+    override fun onPostResume(){super.onPostResume();continueComposition();window.decorView.post{drainPicked()}}
     // Lifecycle reaches RESUMED after onResume returns on Android 14+. Recheck after dispatch;
     // updateHdrWindow still rejects a queued callback if the Activity was paused/destroyed meanwhile.
     override fun onResume(){super.onResume();if(ExternalModeRuntime.status.running)startActivity(android.content.Intent(this,ExternalModeActivity::class.java))else {if(MonitorPreferences.editor(this))startEditorMonitor()};diagnosticsPanel?.syncNotification();window.decorView.post{if(!isDestroyed)updateHdrWindow()};if(::compositionPreview.isInitialized)compositionPreview.setActive(true);if(::developView.isInitialized)developView.setActive(true);if(::stageView.isInitialized)stageView.setActive(true);if(diagnosticsDialog?.isShowing==true)diagnostics.start(lifecycleScope,::publishDiagnostics)}
@@ -906,7 +970,7 @@ class LeicaActivity:AppCompatActivity() {
     override fun onTrimMemory(level:Int){super.onTrimMemory(level);engine.memory.trim(level)}
     override fun onLowMemory(){super.onLowMemory();engine.memory.trim(15)}
     override fun onDestroy(){
-        spaceFullscreen?.dismiss();spaceFullscreen=null
+        spaceFullscreen?.dismiss();spaceFullscreen=null;pickerNotice?.dismiss();pickerNotice=null
         previewUpdates.discard();cancel?.cancelled=true;engine.cancelRun();gaic.cancelRun();compositionPreview.close();compositionLoaded?.bitmap?.recycle();compositionLoadingBitmap?.recycle();job?.cancel();ticker?.cancel();diagnostics.stop();diagnosticsDialog?.dismiss();runtimeMonitor?.stop();runtimeMonitor=null;developView.close();stageView.close();clearDepthViews();compare.closeSources();compare.original=null;compare.result=null
         persistEditor()
         worker.execute{try{engine.close()}finally{engine.clearCache();photoImports.close();ExternalModeRuntime.editorBusy=false}};worker.shutdown();super.onDestroy()

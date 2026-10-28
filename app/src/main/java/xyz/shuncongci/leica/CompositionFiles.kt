@@ -46,7 +46,7 @@ object CompositionFiles {
     fun save(context:Context,file:File,crop:CompositionGeometry.Crop,cancel:Cancel,outputSize:Pair<Int,Int>?=null,
              format:ExportFormat=ExportPreferences.load(context)):String = saveSource(context,Uri.fromFile(file),crop,cancel,outputSize,format)
     fun saveSource(context:Context,uri:Uri,crop:CompositionGeometry.Crop,cancel:Cancel,outputSize:Pair<Int,Int>?=null,
-                   format:ExportFormat=ExportPreferences.load(context),badge:Boolean=false):String {
+                   format:ExportFormat=ExportPreferences.load(context),badge:Boolean=false,metadataSource:File?=null):String {
         require(!badge || format==ExportFormat.JPEG){"徕卡一瞬相册标识仅支持JPEG"}
         val name="传奇一瞬-${System.currentTimeMillis()}-${UUID.randomUUID().toString().take(8)}.${format.extension}"
         val cr=context.contentResolver
@@ -56,10 +56,13 @@ object CompositionFiles {
             fun raw(output:java.io.OutputStream){PhotoExport.write(context,output,source.width,source.height,crop,ow,oh,format,cancel){b->
                 source.bitmap(b,1).let{bitmap->try{check(bitmap.width==b.w && bitmap.height==b.h){"原像素区域尺寸不一致"};IntArray(b.w*b.h).also{bitmap.getPixels(it,0,b.w,0,0,b.w,b.h)}}finally{bitmap.recycle()}}
             }}
-            // Badge: same encoder/quality into a private file, then an EXIF-only insert with readback.
-            val marked=if(badge){
-                val plain=File(context.cacheDir,"export-${UUID.randomUUID()}.jpg")
-                try{plain.outputStream().use{raw(it)};LeicaBadgeExport.marked(context,plain,ow,oh,cancel)}finally{plain.delete()}
+            // Same encoder/quality; inject original metadata without decoding/re-encoding the result.
+            val marked=if(badge || metadataSource!=null){
+                val plain=File(context.cacheDir,"export-${UUID.randomUUID()}.${format.extension}")
+                try{plain.outputStream().use{raw(it)}
+                    if(metadataSource!=null)EditorExportMetadata.preserve(context,plain,metadataSource,ow to oh,badge,cancel)
+                    else LeicaBadgeExport.marked(context,plain,ow,oh,cancel)
+                }finally{plain.delete()}
             }else null
             fun encode(output:java.io.OutputStream){
                 if(marked==null){raw(output);return}

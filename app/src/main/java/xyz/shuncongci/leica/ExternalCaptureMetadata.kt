@@ -13,7 +13,6 @@ import java.io.File
  * color interpretation and the explicitly controlled gallery badge. Platform fallback keeps originals.
  */
 object ExternalCaptureMetadata {
-    data class Prepared(val exif:ByteArray,val complete:Boolean)
     fun openOriginal(context:Context,uri:Uri):java.io.InputStream {
         val original=if(Build.VERSION.SDK_INT>=29 && uri.scheme=="content" && uri.authority=="media"){
             check(ExternalPermissions.originalMetadata(context)){"原片位置信息权限不足，未用被擦除GPS的副本代替原片"}
@@ -45,12 +44,12 @@ object ExternalCaptureMetadata {
         output.saveAttributes();cancel.check()
         return CaptureMetadataContainer.readExif(carrier).exif?:error("平台未能转存原片拍摄EXIF，原片保留")
     }
-    fun prepare(source:File,work:File,width:Int,height:Int,watermark:Boolean,cancel:Cancel):Prepared {
+    internal fun prepare(source:File,work:File,width:Int,height:Int,watermark:Boolean,cancel:Cancel):ExternalMetadataTransfer.Prepared {
         cancel.check();val captured=CaptureMetadataContainer.readExif(source)
-        val packet=if(captured.supported)captured.exif else platformExif(source,work,cancel)
-        val exif=packet?.let(::CaptureExif)?:CaptureExif.empty()
+        if(captured.supported)return ExternalMetadataTransfer.prepare(source,width,height,watermark,cancel)
+        val exif=CaptureExif(platformExif(source,work,cancel))
         val normalized=exif.normalized(width,height,XiaomiLeicaBadge.patches(exif,watermark))
         cancel.check()
-        return Prepared(normalized,captured.supported && !captured.otherMetadata)
+        return ExternalMetadataTransfer.fallback(normalized,watermark)
     }
 }

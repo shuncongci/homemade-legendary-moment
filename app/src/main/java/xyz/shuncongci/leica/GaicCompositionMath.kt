@@ -56,7 +56,7 @@ object GaicCompositionMath {
         var number=0
         return selected.sortedByDescending{scores[it]}.map{i->
             if(i==0)CompositionAnalysis.Suggestion(crops[i],"保留原构图","完整画面；已参与模型评分",null)
-            else CompositionAnalysis.Suggestion(crops[i],"模型方案 ${++number}","GAIC 模型评分排序；不含人工构图规则分数",null,(scores[i]-scores[0]).toDouble())
+            else CompositionAnalysis.Suggestion(crops[i],"模型方案 ${++number}","按构图模型评分排序",null,(scores[i]-scores[0]).toDouble())
         }
     }
 }

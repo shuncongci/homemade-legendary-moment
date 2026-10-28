@@ -1,0 +1,29 @@
+{
+  "source": "memory-50mp-audit/alternative_bokeh.py layered,64 planes, disk4x4 gamma2.2; synthetic only",
+  "fixtures": [
+    {
+      "name": "mixed.bin",
+      "width": 31,
+      "height": 23,
+      "sha256": "dbdedc44c1a4e42e74ff04f5a5779ed27a0c5cd0ff51de02cc53e9c50ce2cb44"
+    },
+    {
+      "name": "thin-row.bin",
+      "width": 41,
+      "height": 1,
+      "sha256": "8bcb582f57b8158f93f0d3d0e71233555107fa2be42a26501394bb651ee299f9"
+    },
+    {
+      "name": "thin-col.bin",
+      "width": 1,
+      "height": 37,
+      "sha256": "9a40a47b6ee4558a7ffd5761e8e0d9c9ddd0ba40bf08d1a359ace81bd830d97c"
+    },
+    {
+      "name": "border.bin",
+      "width": 19,
+      "height": 17,
+      "sha256": "f26eb6857fa43041ddfe26943e1dac5fe92a95b1fae20879a634aca29da9a8ca"
+    }
+  ]
+}

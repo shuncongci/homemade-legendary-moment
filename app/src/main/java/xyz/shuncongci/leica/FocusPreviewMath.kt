@@ -14,8 +14,7 @@ object FocusPreviewMath {
         cancel.check();FullFrameOptics.checkAperture(aperture)
         val selected=LegendaryMath.focus(depth,point) ?: return null
         val (w,h)=LeicaSizes.previewSize(outputWidth,outputHeight)
-        val gain=FullFrameOptics.radiusScale(selected,aperture,outputWidth,outputHeight)
-        val field=LegendaryMath.Frame(depth.w,depth.h,1,FloatArray(depth.size){(depth.data[it]-selected)*gain})
+        val field=FullFrameOptics.nativeCoc(depth,selected,aperture,outputWidth,outputHeight,cancel)
         val acceptable=FullFrameOptics.acceptableRadius(outputWidth,outputHeight)
         val pixels=IntArray(w*h)
         for(y in 0 until h){cancel.check();val oy=FullFrameOptics.displayPixel(y,h,outputHeight)

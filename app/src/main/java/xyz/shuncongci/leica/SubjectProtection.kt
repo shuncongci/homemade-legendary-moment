@@ -47,7 +47,7 @@ internal class SubjectProtection(
             require(sam.size==2 && sam[0].shape.contentEquals(longArrayOf(1,3,256,256)) && sam[1].data.size==3){"主体识别模型输出尺寸异常"}
             val mask=SubjectSelectionMath.select(sam[0].data,sam[1].data,point,rgb.w,rgb.h,cancel)
             cancel.check();progress(UiText.subjectLoading(at+1,points.size,true))
-            val trimap=SubjectProtectionMath.trimap(mask,cancel)
+            val trimap=SubjectSelectionMath.positiveTrimap(mask,listOf(point),cancel)
             val input=SubjectProtectionMath.matteInput(rgb,trimap,cancel)
             // 2.1.21: whole pass for small frames, else 1024 tiles; all tiles share one size and one session.
             val padded=model(MATTE,MATTE_SHA).use{s->SubjectMatteTiles.matte(input,cancel){tile->

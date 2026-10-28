@@ -12,7 +12,7 @@ class FocusPreviewTest {
         for(ap in LegendaryMath.apertures){
             val mask=FocusPreviewMath.create(d,point,ap,101,21,Cancel())!!
             assertEquals(LegendaryMath.focus(d,point)!!,mask.focus,0f)
-            for(i in d.data.indices)assertEquals(FocusPreviewMath.color((d.data[i]-mask.focus)*FullFrameOptics.radiusScale(mask.focus,ap,101,21),FullFrameOptics.acceptableRadius(101,21)),mask.argb[i])
+            for(i in d.data.indices)assertEquals(FocusPreviewMath.color((d.data[i]*d.data[i]-mask.focus*mask.focus)*FullFrameOptics.radiusScale(mask.focus,ap,101,21),FullFrameOptics.acceptableRadius(101,21)),mask.argb[i])
         };assertArrayEquals(before,d.data,0f)
     }
     @Test fun symmetricCoCThresholdsNotSubjectSelection(){

@@ -30,11 +30,20 @@ object ClippedHighlights {
     /** Per-pixel multiplier (>=1) for the surplus of [high]. Exposed for tests/audits. */
     internal fun gains(colored:Planes,high:Frame,coc:Frame,cancel:Cancel):FloatArray? {
         require(high.channels==3 && coc.channels==1 && high.w==colored.width && high.h==colored.height && coc.w==high.w && coc.h==high.h)
-        val w=high.w;val h=high.h;val n=high.size
+        return gainsPeak(colored,high.w,high.h,coc,cancel){i->max(high.data[i],max(high.data[high.size+i],high.data[2*high.size+i]))}
+    }
+    /** Same global density equation, from the owned per-pixel RGB peak; no whole RGB float input. */
+    internal fun gainsFromPeak(colored:Planes,peak:Frame,coc:Frame,cancel:Cancel):FloatArray? {
+        require(peak.channels==1 && peak.w==colored.width && peak.h==colored.height)
+        return gainsPeak(colored,peak.w,peak.h,coc,cancel){peak.data[it]}
+    }
+    private fun gainsPeak(colored:Planes,w:Int,h:Int,coc:Frame,cancel:Cancel,peak:(Int)->Float):FloatArray? {
+        require(coc.w==w && coc.h==h && coc.channels==1)
+        val n=w*h
         fun maxByte(i:Int)=maxOf(colored.p0[i].toInt() and 255,colored.p1[i].toInt() and 255,colored.p2[i].toInt() and 255)
         var any=false
         for(i in 0 until n){if(i and 65535==0)cancel.check()
-            if(maxByte(i)>CLIP_START && abs(coc.data[i])>.75f && (high.data[i]>0f || high.data[n+i]>0f || high.data[2*n+i]>0f)){any=true;break}
+            if(maxByte(i)>CLIP_START && abs(coc.data[i])>.75f && (peak(i)>0f)){any=true;break}
         }
         if(!any)return null
         // Coarse summed-area table of the surplus peak (all extracted lights, clipped or not),
@@ -42,7 +51,7 @@ object ClippedHighlights {
         val gw=(w+CELL-1)/CELL;val gh=(h+CELL-1)/CELL
         val cell=DoubleArray(gw*gh)
         for(y in 0 until h){if(y and 63==0)cancel.check();val row=(y/CELL)*gw
-            for(x in 0 until w){val i=y*w+x;val m=max(high.data[i],max(high.data[n+i],high.data[2*n+i]));if(m>0f)cell[row+x/CELL]+=m.toDouble()}
+            for(x in 0 until w){val i=y*w+x;val m=peak(i);if(m>0f)cell[row+x/CELL]+=m.toDouble()}
         }
         val sat=DoubleArray((gw+1)*(gh+1))
         for(gy in 0 until gh){var run=0.0;for(gx in 0 until gw){run+=cell[gy*gw+gx];sat[(gy+1)*(gw+1)+gx+1]=sat[gy*(gw+1)+gx+1]+run}}
@@ -55,7 +64,7 @@ object ClippedHighlights {
             for(x in 0 until w){val i=y*w+x
                 val dw=defocusWeight(coc.data[i]);if(dw<=0f)continue
                 val mb=maxByte(i);val cw=clipWeight(mb);if(cw<=0f)continue
-                val m=max(high.data[i],max(high.data[n+i],high.data[2*n+i]));if(m<=0f)continue
+                val m=peak(i);if(m<=0f)continue
                 // Fraction of the clipped linear value that extraction moved into the light layer.
                 // Broad surfaces (cap reverted to the peak) have ~0 and stay untouched.
                 val tone=smooth((m/linearTable[mb]-.25f)/.5f);if(tone<=0f)continue

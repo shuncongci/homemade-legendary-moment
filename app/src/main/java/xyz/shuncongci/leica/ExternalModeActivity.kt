@@ -92,21 +92,21 @@ class ExternalModeActivity:AppCompatActivity() {
         val header=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL}
         header.addView(button("返回"){leave()},LinearLayout.LayoutParams(dp(68),-2))
         header.addView(text("外接模式",22f).apply{setPadding(dp(14),0,0,0)},LinearLayout.LayoutParams(0,-2,1f));add(header,0)
-        add(text("拍一张，按预设自动调色并另存一张 · 不支持虚化\n只处理“监听已就绪”之后新增的照片。旧照片无论是否处理过都跳过；停止期间的照片、重启前的队列均不补跑。"))
+        add(text("拍一张，自动调色并保存 · 不支持虚化\n等“监听已就绪”后再拍照。已有照片和停止期间的照片不会处理。"))
         buildPermissions()
         heading("相机照片目录")
         folderLabel=text("");add(folderLabel)
         add(button("自动寻找相机相册",true){discover()})
         add(button("浏览所有已授权文件夹",true){browseRoots()})
         add(button("手动选择目录（系统授权）",true){treePicker.launch(null)})
-        add(text("只监听所选目录的直接子文件，不递归扫描整台手机；本应用的导出目录禁止作为输入。Android 受保护目录仍不可访问。",12f))
+        add(text("只读取所选文件夹，不读取子文件夹。不能选择本应用的导出目录或系统受保护目录。",12f))
         heading("预设调色与导出")
         style=button("",true){chooseStyle()};add(style)
         policy=button("",true){choosePolicy()};add(policy)
         format=button("",true){chooseFormat()};add(format)
         original=button("",true){chooseOriginal()};add(original)
         watermark=button("",true){chooseWatermark()};add(watermark)
-        add(text("成片保留原片拍摄信息；相册标识不影响画面。",12f))
+        add(text("尽量保留原有拍摄信息；动态照片、HDR 和厂商附加数据可能无法完整转存。相册标识不改画面。",12f))
         add(text("HDR 只存为 Ultra HDR JPEG，需要 Android 14 以上且原片本身带 HDR；普通照片存为 SDR。保持原图尺寸，存到 Pictures/传奇一瞬/外接，不覆盖原片。",12f))
         heading("监听与进度")
         overlay=button("",true){setSettings(settings.copy(overlay=!settings.overlay))};add(overlay)
@@ -132,7 +132,7 @@ class ExternalModeActivity:AppCompatActivity() {
         })
         add(button("开启所有文件访问权限"){requestAllFiles()})
         add(button("目录读写授权（删除原片需要）",true){requestTreeWrite=true;treePicker.launch(settings.folder?.takeIf{it.kind==ExternalFolderKind.TREE}?.let{Uri.parse(it.location)})})
-        originalPermission=button("确认本次原片处置授权"){showOriginalPermission()};add(originalPermission)
+        originalPermission=button("确认删除原片的系统授权"){showOriginalPermission()};add(originalPermission)
         add(button("允许通知（后台进度／停止入口）"){
             if(Build.VERSION.SDK_INT>=33 && !ExternalPermissions.notifications(this))notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
             else openSetting(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,packageName))
@@ -162,7 +162,7 @@ class ExternalModeActivity:AppCompatActivity() {
         configButtons.forEach{it.isEnabled=!s.running && !browsing}
         start.isEnabled=!s.running && !browsing;stop.isEnabled=s.running && !s.stopping
         status.text=s.description();progress.visibility=if(s.running && (!s.ready || s.working || s.stopping))View.VISIBLE else View.GONE
-        output.text="最后保存：${s.lastOutput.ifEmpty{"暂无"}}\n停止后再次开启将建立新基线，不补处理历史照片。"
+        output.text="最后保存：${s.lastOutput.ifEmpty{"暂无"}}\n重新开启后，只处理之后拍的新照片。"
         if(finishAfterStop && !s.running){finishAfterStop=false;finish()}
     }
     private fun requestPhotos(){
@@ -181,12 +181,12 @@ class ExternalModeActivity:AppCompatActivity() {
         try{startActivity(intent)}catch(_:android.content.ActivityNotFoundException){try{startActivity(fallback)}catch(_:android.content.ActivityNotFoundException){message("请手动打开系统设置","应用信息 → 传奇一瞬 → 权限／后台电池设置。")}}
     }
     private fun batteryGuide(){
-        AlertDialog.Builder(this).setTitle("建议开启后台不限制").setMessage("请在系统的应用信息 → 电池／后台耗电管理中选择“不限制”或“允许后台运行”。部分机型还需要允许自启动。即使已忽略电池优化，厂家仍可能限制后台；无法承诺永不被系统终止。")
+        AlertDialog.Builder(this).setTitle("建议开启后台不限制").setMessage("请在系统的应用信息 → 电池／后台耗电管理中选择“不限制”或“允许后台运行”。部分机型还需要允许自启动。设置后仍可能被系统关闭，请留意监听状态。")
             .setPositiveButton("申请忽略电池优化"){_,_->openSetting(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,Uri.parse("package:$packageName")),Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))}
             .setNeutralButton("打开应用设置"){_,_->openSetting(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:$packageName")))}.setNegativeButton("稍后",null).show()
     }
     private fun discover(){
-        if(!ExternalPermissions.allFiles(this) && !ExternalPermissions.allPhotos(this)){message("需要目录读取授权","请先允许全部照片或所有文件访问；也可直接使用系统目录选择器授权一个相机目录。不会请求后自动处理照片。");return}
+        if(!ExternalPermissions.allFiles(this) && !ExternalPermissions.allPhotos(this)){message("需要目录读取授权","请先允许全部照片或所有文件访问；也可直接使用系统目录选择器授权一个相机目录。授权后不会自动开始处理。");return}
         browsing=true;refresh()
         lifecycleScope.launch{
             try{
@@ -228,9 +228,9 @@ class ExternalModeActivity:AppCompatActivity() {
         val options=ExternalOriginalPolicy.entries
         AlertDialog.Builder(this).setTitle("成片保存后的原片处理").setSingleChoiceItems(options.map{it.label}.toTypedArray(),options.indexOf(settings.original)){dialog,i->
             dialog.dismiss()
-            if(options[i]==ExternalOriginalPolicy.KEEP)setSettings(settings.copy(original=options[i]))
-            else AlertDialog.Builder(this).setTitle("确认开启成功后删除原片").setMessage("仅本次监听接收的新照片，在成片连同元数据保存成功并读取核验后才尝试处置原片。失败、取消、原片变化或无法完整确认元数据时不删。\n\n支持时移到系统回收站；直接文件目录或部分目录提供器可能永久删除，不能保证可恢复。若系统要求额外确认，会先保留原片，等你在顶部授权；停止/重启不补删。\n\n建议先用不重要的照片验证。默认“同时保留”更安全。")
-                .setPositiveButton("开启成功后删除"){_,_->setSettings(settings.copy(original=ExternalOriginalPolicy.DELETE_AFTER_SAVE))}.setNegativeButton("仍然保留",null).show()
+            if(options[i]==ExternalOriginalPolicy.KEEP)setSettings(settings.copy(original=options[i],deletionConsent=0))
+            else AlertDialog.Builder(this).setTitle(ExternalDeletionConsent.TITLE).setMessage(ExternalDeletionConsent.MESSAGE)
+                .setPositiveButton(ExternalDeletionConsent.ACCEPT){_,_->setSettings(settings.copy(original=ExternalOriginalPolicy.DELETE_AFTER_SAVE,deletionConsent=ExternalDeletionConsent.VERSION))}.setNegativeButton(ExternalDeletionConsent.DECLINE,null).show()
         }.setNegativeButton("取消",null).show()
     }
     private fun showOriginalPermission(){
@@ -245,7 +245,7 @@ class ExternalModeActivity:AppCompatActivity() {
                 }}
                 if(attempt?.sender!=null){
                     pendingOriginalId=attempt.id;pendingOriginalRun=attempt.run
-                    AlertDialog.Builder(this@ExternalModeActivity).setTitle("仅授权这张已处理原片").setMessage("成片和原片已重新核对。系统授权后还会再次核对，才处置这张原片；未同意则两张都保留。")
+                    AlertDialog.Builder(this@ExternalModeActivity).setTitle("仅授权这张已处理原片").setMessage("成片已保存，原片和成片也已核对。确认后只删除这张原片；取消则两张都保留。")
                         .setPositiveButton("打开系统确认"){_,_->
                             try{
                                 if(ExternalModeRuntime.status.let{!it.running || it.stopping || it.runId!=attempt.run})finishOriginalApproval(false)
@@ -269,14 +269,14 @@ class ExternalModeActivity:AppCompatActivity() {
                     else if(!ExternalModeRuntime.status.let{it.running && !it.stopping && it.runId==run})"监听已停止或应用已重启；不补删原片"
                     else deletion.attempt(id,folder,Cancel(),permissionTried=true).result.message
                 }}
-                ExternalModeRuntime.update{it.copy(lastOriginalStatus=note)};message("原片处置结果",note)
+                ExternalModeRuntime.update{it.copy(lastOriginalStatus=note)};message("原片删除结果",note)
             }catch(e:Exception){propagateFatalCause(e);message("请人工核对原片",e.message.orEmpty())}
             finally{refresh()}
         }
     }
     private fun startListening(){
         ExternalPermissions.startProblem(this,settings)?.let{message("尚不能开始",it);return}
-        if(ExternalModeRuntime.editorBusy){message("编辑器仍在处理","请先等待或取消手动编辑任务，再开启外接模式，避免同时运行两条处理链。");return}
+        if(ExternalModeRuntime.editorBusy){message("编辑器仍在处理","请先等待或取消手动编辑任务，再开启外接模式，避免同时处理照片。");return}
         message("开始监听新增照片","当前目录已有的全部照片将被跳过。请等“监听已就绪”后再拍照。停止期间的照片和旧队列都不会补跑。${if(!ExternalPermissions.battery(this))"\n建议先将后台电池设为不限制。"else ""}${if(!ExternalPermissions.notifications(this))"\n通知未允许，后台进度／停止入口可能不可见，请在本页停止。"else ""}${if(settings.overlay && !ExternalPermissions.overlay(this))"\n悬浮窗未允许：改用页面／通知显示进度。"else ""}"){
             if(!ExternalModeService.start(this))message("未开始","请确认没有其他显影任务，或检查系统是否禁止启动前台服务。")
             refresh()

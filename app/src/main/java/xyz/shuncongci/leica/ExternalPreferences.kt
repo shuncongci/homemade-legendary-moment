@@ -21,11 +21,11 @@ data class ExternalFolder(val kind:ExternalFolderKind,val location:String,val la
 data class ExternalSettings(val folder:ExternalFolder?=null,val style:LeicaStyle=LeicaStyle.DEFAULT,
                             val policy:ExternalExportPolicy=ExternalExportPolicy.SDR,val format:ExportFormat=ExportFormat.DEFAULT,val overlay:Boolean=true,
                             val original:ExternalOriginalPolicy=ExternalOriginalPolicy.KEEP,val metadataWatermark:Boolean=false,
-                            val monitor:Boolean=false)
+                            val monitor:Boolean=false,val deletionConsent:Int=0)
 object ExternalPreferences {
     private fun prefs(c:Context)=c.getSharedPreferences("external-camera-mode",Context.MODE_PRIVATE)
-    fun load(c:Context):ExternalSettings=prefs(c).let { p->ExternalSettings(ExternalFolder.parse(p.getString("folder",null)),LeicaStyle.fromId(p.getString("style",null)),ExternalExportPolicy.fromId(p.getString("policy",null)),ExportFormat.fromId(p.getString("format",null),Build.VERSION.SDK_INT),p.getBoolean("overlay",true),ExternalOriginalPolicy.fromId(p.getString("original-policy",null)),p.getBoolean("metadata-watermark",false),p.getBoolean("monitor-notification",false)) }
-    fun save(c:Context,s:ExternalSettings){check(prefs(c).edit().putString("folder",s.folder?.json()).putString("style",s.style.id).putString("policy",s.policy.id).putString("format",s.format.id).putBoolean("overlay",s.overlay).putString("original-policy",s.original.id).putBoolean("metadata-watermark",s.metadataWatermark).putBoolean("monitor-notification",s.monitor).commit()){"无法保存外接预设"}}
+    fun load(c:Context):ExternalSettings=prefs(c).let { p->ExternalSettings(ExternalFolder.parse(p.getString("folder",null)),LeicaStyle.fromId(p.getString("style",null)),ExternalExportPolicy.fromId(p.getString("policy",null)),ExportFormat.fromId(p.getString("format",null),Build.VERSION.SDK_INT),p.getBoolean("overlay",true),ExternalDeletionConsent.restored(ExternalOriginalPolicy.fromId(p.getString("original-policy",null)),p.getInt("deletion-consent",0)),p.getBoolean("metadata-watermark",false),p.getBoolean("monitor-notification",false),p.getInt("deletion-consent",0)) }
+    fun save(c:Context,s:ExternalSettings){check(prefs(c).edit().putString("folder",s.folder?.json()).putString("style",s.style.id).putString("policy",s.policy.id).putString("format",s.format.id).putBoolean("overlay",s.overlay).putString("original-policy",s.original.id).putBoolean("metadata-watermark",s.metadataWatermark).putInt("deletion-consent",if(s.original==ExternalOriginalPolicy.DELETE_AFTER_SAVE)s.deletionConsent else 0).putBoolean("monitor-notification",s.monitor).commit()){"无法保存外接预设"}}
 }
 object ExternalPermissions {
     fun granted(c:Context,p:String)=ContextCompat.checkSelfPermission(c,p)==PackageManager.PERMISSION_GRANTED

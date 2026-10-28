@@ -193,7 +193,7 @@ object ExportUi {
     }
     fun show(anchor:StudioButton,current:ExportFormat,sizeLabel:String,selected:(ExportFormat)->Unit,export:(ExportFormat)->Unit,
              sourceHdr:Boolean=false,hdrUnavailableReason:String?=null,exportHdr:(()->Unit)?=null,
-             badge:Boolean?=null,badgeChanged:(Boolean)->Unit={}):Handle? {
+             badge:Boolean?=null,badgeChanged:(Boolean)->Unit={},preserveMetadata:Boolean=false):Handle? {
         if(!anchor.isAttachedToWindow || anchor.width<=0 || anchor.height<=0)return null
         val context=anchor.context;val host=activity(context)?:return null
         val decor=host.window.decorView as? ViewGroup?:return null
@@ -215,6 +215,7 @@ object ExportUi {
         val header=text("导出成片",20f,ink).apply{typeface=Typeface.create("sans-serif-medium",Typeface.NORMAL);androidx.core.view.ViewCompat.setAccessibilityHeading(this,true)};body.addView(header)
         val size=text("$sizeLabel · 不放大 · ${if(sourceHdr)"HDR成片直接保存"else "SDR成片直接保存"}",11f,secondaryInk);body.addView(size)
         val hdrNote=text(if(sourceHdr)"当前为 HDR · 仅提供 Ultra HDR JPG。保存已生成成片，不重新调色或虚化。"else "当前为 SDR · 请选择下方导出格式。",11f,secondaryInk);body.addView(hdrNote)
+        if(preserveMetadata)hdrNote.append("\n保留可读取的拍摄信息，包括原有位置。部分附加信息只作归档，相册可能不显示；系统已隐藏的信息无法恢复。")
         var choice=if(current.supports(Build.VERSION.SDK_INT))current else ExportFormat.DEFAULT
         var badgeOn=badge==true
         // Same white/black selected toggle as the editor. Hidden where the caller cannot honour it.
@@ -235,7 +236,7 @@ object ExportUi {
                 setOnClickListener{if(!badgeOn && format!=null && choice!=format){choice=format;selected(format)}}
             }
         }
-        val note=text(if(sourceHdr)"导出为带增益图的 JPG；实际裁剪与尺寸设置仍生效。裁剪时只处理几何与编码，不重新运行模型。" else "比例以此PNG导出为基准，是本轮桌面样本的存储体积参考，不是运行内存或手机编码保证值；不同照片可超出范围。PNG本轮优化相对旧版另省约19–20%。\nPNG保留当前可用像素，不是复制未调色原文件；裁剪与已有尺寸仍生效。透明图请选择PNG；大图内存不足也可用分块PNG。不会自动缩图。现有SDR流程为8位sRGB。",10f,secondaryInk);body.addView(note)
+        val note=text(if(sourceHdr)"导出为带增益图的 JPG；实际裁剪与尺寸设置仍生效。裁剪时只处理几何与编码，不重新运行模型。" else "体积估计以 PNG 为参照，实际大小取决于照片。\nPNG 无损保存当前成片，不是备份原片；裁剪和尺寸设置仍然生效。需要保留透明背景时请选择 PNG。SDR 导出为 8 位 sRGB，不会自动缩小图片。",10f,secondaryInk);body.addView(note)
         /** Formats the badge cannot carry collapse (fade + height) instead of jumping; the remembered SDR choice is kept. */
         fun applyBadge(animate:Boolean){
             if(animate && ValueAnimator.areAnimatorsEnabled())android.transition.TransitionManager.beginDelayedTransition(body,android.transition.AutoTransition().apply{duration=240})

@@ -26,6 +26,10 @@ object EditorCrop {
             val p=plan(ww,wh,crop,BokehOutput.ORIGINAL,false)
             return CompositionOutput.Plan(p.crop,p.width,p.height,ww,wh)
         }
-        return CompositionOutput.plan(w,h,crop,if(CompositionOutput.eligible(w,h,crop,output))output else BokehOutput.ORIGINAL)
+        val p=CompositionOutput.plan(w,h,crop,if(CompositionOutput.eligible(w,h,crop,output))output else BokehOutput.ORIGINAL)
+        val (ww,wh)=BokehRenderPolicy.originalSize(p.workWidth,p.workHeight)
+        if(ww==p.workWidth && wh==p.workHeight)return p
+        val b=CompositionGeometry.pixels(p.crop,ww,wh)
+        return CompositionOutput.Plan(p.crop,min(p.width,b.w),min(p.height,b.h),ww,wh)
     }
 }

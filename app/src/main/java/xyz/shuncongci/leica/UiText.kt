@@ -30,7 +30,7 @@ object UiText {
         val message = error.message
         val publicMessages = setOf("无法打开这张照片", "不支持的照片格式", "无法解码这张照片", "请至少选择调色或虚化")
         return when {
-            message in publicMessages -> "处理失败：$message"
+            message in publicMessages || message in PhotoImportPolicy.publicMessages -> "处理失败：$message"
             error is SecurityException -> "访问权限不足，请重新选择照片或允许访问。原始详情可在监测中查看。"
             error is java.io.IOException -> "文件读取或写入失败，请检查照片与剩余空间。原始详情可在监测中查看。"
             else -> "处理未完成，请展开监测中的原始详情查看原因。"

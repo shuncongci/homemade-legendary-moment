@@ -45,7 +45,7 @@ class ExternalPhotoExport(private val context:Context,private val journal:Extern
         }
         journal.abandonOldJobs()
     }
-    fun save(job:ExternalQueueStore.Job,result:LeicaEngine.Result,format:ExportFormat,cancel:Cancel,metadata:ByteArray,work:File):String {
+    internal fun save(job:ExternalQueueStore.Job,result:LeicaEngine.Result,format:ExportFormat,cancel:Cancel,metadata:ExternalMetadataTransfer.Prepared,work:File):String {
         val hdr=result.hdrReady
         check(!hdr || Build.VERSION.SDK_INT>=34){"HDR平台不支持，未伪造HDR"}
         val name=ExternalModePolicy.outputName(job.id,hdr,format)
@@ -65,7 +65,7 @@ class ExternalPhotoExport(private val context:Context,private val journal:Extern
         val encoded=File(work,"encoded-image");val decorated=File(work,"metadata-verified-image")
         check(!encoded.exists() && !decorated.exists())
         encoded.outputStream().use{out->encodeImage(out);cancel.check();out.fd.sync()}
-        CaptureMetadataContainer.write(encoded,decorated,metadata,result.width,result.height,cancel)
+        ExternalMetadataTransfer.write(encoded,decorated,metadata,result.width,result.height,cancel)
         val expectedHash=ExternalOriginalGuard.digest(decorated.inputStream()){cancel.check()}
         journal.rememberOutput(job.id,expectedHash)
         // Publication can only see the fully encoded, metadata-readback-verified file.

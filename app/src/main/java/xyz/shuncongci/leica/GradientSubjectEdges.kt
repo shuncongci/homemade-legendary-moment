@@ -15,33 +15,18 @@ internal object GradientSubjectEdges {
         val w=sharp.width;val h=sharp.height
         val r=(3*max(5,ceil(max(w,h)/1220.0*5).toInt())).coerceAtMost(64)
         for(top in 0 until h step 64){
-            cancel.check();val end=min(h,top+64);val count=(end-top)*w
-            if(!(top*w until end*w).any{alpha.data[it]>0f && alpha.data[it]<1f})continue
-            val y0=max(0,top-r);val y1=min(h,end+r);val rows=y1-y0;val n=w*rows
-            val horizontal=DoubleArray(n)
+            cancel.check();val end=min(h,top+64)
+            val range=EdgeBoxSums.mixed(alpha.data,w,top,end,cancel)?:continue
+            val left=range.first;val right=range.last;val span=right-left+1
+            val box=EdgeBoxSums(w,h,top,end,r,left,right);val count=box.count
+            val horizontal=DoubleArray(span*box.rows)
             fun known(i:Int)=alpha.data[i]<=0f
-            fun box(value:(Int)->Double):DoubleArray {
-                for(yy in 0 until rows){cancel.check();var sum=0.0;var left=0;var right=-1
-                    for(x in 0 until w){val lo=max(0,x-r);val hi=min(w-1,x+r)
-                        while(right<hi){right++;sum+=value((yy+y0)*w+right)}
-                        while(left<lo){sum-=value((yy+y0)*w+left);left++}
-                        horizontal[yy*w+x]=sum
-                    }
-                }
-                val dst=DoubleArray(n)
-                for(x in 0 until w){if(x and 255==0)cancel.check();var sum=0.0;var lo=0;var hi=-1
-                    for(yy in 0 until rows){val a=max(0,yy-r);val b=min(rows-1,yy+r)
-                        while(hi<b){hi++;sum+=horizontal[hi*w+x]};while(lo<a){sum-=horizontal[lo*w+x];lo++}
-                        dst[yy*w+x]=sum
-                    }
-                };return dst
-            }
-            val den=box{if(known(it))1.0 else 0.0}
-            val sx=box{if(known(it))(it%w).toDouble() else 0.0}
-            val sy=box{if(known(it))(it/w).toDouble() else 0.0}
-            val xx=box{if(known(it))(it%w).toDouble().pow(2) else 0.0}
-            val xy=box{if(known(it))(it%w).toDouble()*(it/w) else 0.0}
-            val yy=box{if(known(it))(it/w).toDouble().pow(2) else 0.0}
+            val den=box.f64(horizontal,cancel){if(known(it))1.0 else 0.0}
+            val sx=box.f64(horizontal,cancel){if(known(it))(it%w).toDouble() else 0.0}
+            val sy=box.f64(horizontal,cancel){if(known(it))(it/w).toDouble() else 0.0}
+            val xx=box.f64(horizontal,cancel){if(known(it))(it%w).toDouble().pow(2) else 0.0}
+            val xy=box.f64(horizontal,cancel){if(known(it))(it%w).toDouble()*(it/w) else 0.0}
+            val yy=box.f64(horizontal,cancel){if(known(it))(it/w).toDouble().pow(2) else 0.0}
             val valid=BooleanArray(count){true};val confidence=DoubleArray(count){1.0}
             val sloped=BooleanArray(count);val oldEstimate=DoubleArray(count)
             val proposal=Array(3){ByteArray(count)}
@@ -49,12 +34,12 @@ internal object GradientSubjectEdges {
                 val s=sharp.plane(ch);val b=rendered.plane(ch)
                 for(delta in listOf(false,true)){
                     fun value(i:Int)=if(delta)((b[i].toInt() and 255)-(s[i].toInt() and 255)).toDouble() else (s[i].toInt() and 255).toDouble()
-                    val z=box{if(known(it))value(it) else 0.0}
-                    val zx=box{if(known(it))value(it)*(it%w) else 0.0}
-                    val zy=box{if(known(it))value(it)*(it/w) else 0.0}
-                    val zz=box{if(known(it))value(it).pow(2) else 0.0}
-                    for(y in top until end){cancel.check();for(x in 0 until w){
-                        val i=y*w+x;val j=(y-top)*w+x;val k=(y-y0)*w+x;val a=alpha.data[i].coerceIn(0f,1f).toDouble()
+                    val z=box.f64(horizontal,cancel){if(known(it))value(it) else 0.0}
+                    val zx=box.f64(horizontal,cancel){if(known(it))value(it)*(it%w) else 0.0}
+                    val zy=box.f64(horizontal,cancel){if(known(it))value(it)*(it/w) else 0.0}
+                    val zz=box.f64(horizontal,cancel){if(known(it))value(it).pow(2) else 0.0}
+                    for(y in top until end){cancel.check();for(x in left..right){
+                        val i=y*w+x;val j=(y-top)*span+x-left;val k=j;val a=alpha.data[i].coerceIn(0f,1f).toDouble()
                         if(!valid[j])continue
                         val d=den[k]
                         if(a<=0 || a>=1 || d<8){valid[j]=false;continue}
@@ -85,7 +70,7 @@ internal object GradientSubjectEdges {
                     }}
                 }
             }
-            for(y in top until end){cancel.check();for(x in 0 until w){val j=(y-top)*w+x
+            for(y in top until end){cancel.check();for(x in left..right){val j=(y-top)*span+x-left
                 if(valid[j] && sloped[j])for(ch in 0..2){val i=y*w+x;val old=out.plane(ch)[i].toInt() and 255;val target=proposal[ch][j].toInt() and 255
                     out.plane(ch)[i]=Math.rint(old+(target-old)*confidence[j]).toInt().coerceIn(0,255).toByte()
                 }

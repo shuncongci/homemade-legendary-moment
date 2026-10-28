@@ -39,6 +39,7 @@ object EditorPresentation {
     fun holdFinal(stage:DevelopMotion.Stage,hasFinal:Boolean)=stage==DevelopMotion.Stage.DONE && hasFinal
     private val step=Regex("^\\d+/\\d+\\s+")
     fun stage(raw:String):String {
+        if(BokehProgress.owns(raw))return BokehProgress.text(raw)
         val text=raw.trim().replace(step,"")
         if(text.isEmpty())return "等待操作"
         // Errors and explicit fallbacks must never be shortened into a success message.

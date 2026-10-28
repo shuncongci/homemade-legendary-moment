@@ -56,7 +56,7 @@ class CompositionActivity:AppCompatActivity() {
         dimensions=text("${intent.getStringExtra("label")?:"原图"} · ${output.label}");panel.block(dimensions)
         bar=ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal).apply{isIndeterminate=true};panel.block(bar)
         status=text("正在分析画面…",12f).apply{accessibilityLiveRegion=View.ACCESSIBILITY_LIVE_REGION_POLITE};panel.block(status)
-        panel.block(text("选择方案 → 应用并另存\n分块时可拖动视角，不改变裁切\nGAIC 纯模型构图，不混入人工规则评分",11f))
+        panel.block(text("选择喜欢的方案，再点导出。\n拖动空间视角不会改变裁框。",11f))
         proposals=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};panel.block(proposals)
         apply=StudioButton(this,true).apply{text="导出";setOnClickListener{showExport()}};panel.block(apply)
         cancel=StudioButton(this).apply{text="取消";setOnClickListener{cancelTask()}};panel.block(cancel)
@@ -95,7 +95,7 @@ class CompositionActivity:AppCompatActivity() {
                 runOnUiThread{
                     if(isDestroyed || isFinishing || token!==c || c.cancelled){display.recycle();return@runOnUiThread}
                     val previous=loadingPreview;loadingPreview=display;preview.setPhoto(display,w,h);previous?.recycle()
-                    status.text="正在进行模型构图评分 · 可拖动三维视角"
+                    status.text="正在分析构图 · 可拖动空间视角"
                 }
             }
             try{
@@ -120,7 +120,7 @@ class CompositionActivity:AppCompatActivity() {
             loadingPreview?.recycle();loadingPreview=null;previous?.bitmap?.recycle()
             preview.showProposals(items.map{CompositionOutput.plan(sourceW,sourceH,it.crop,output).crop},selected)
             showSuggestions()
-            status.text=if(items.size==1)"分析完成 · 没有足够改善依据，保留完整画面"else "分析完成 · 选一个喜欢的构图，再应用另存"
+            status.text=if(items.size==1)"分析完成 · 建议保留原构图"else "分析完成 · 选一个喜欢的构图，再应用另存"
         }
     }
     private fun showSuggestions(){

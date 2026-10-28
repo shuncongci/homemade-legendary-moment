@@ -14,16 +14,22 @@ class DevelopMotion {
     private var colorReady=false
     private var bokehReady=false
     private var finishLift=0f
+    private var finishDetail=0f
+    val showsBokeh get()=stage==Stage.BOKEH_WAIT || stage==Stage.BOKEH_FINISH
+    val presentationLabel get()=when(stage){Stage.COLOR_FINISH->"调色收尾";Stage.BOKEH_FINISH->"虚化收尾";else->null}
+    fun statusText(actual:String)=presentationLabel?.let{"画面：$it\n$actual"}?:actual
     val visible get()=stage!=Stage.IDLE && stage!=Stage.DONE
     val finishing get()=stage==Stage.COLOR_FINISH || stage==Stage.BOKEH_FINISH
-    val needsFrames get()=stage==Stage.COLOR_WAIT || finishing || stage==Stage.BOKEH_WAIT
+    val needsFrames get()=stage==Stage.COLOR_WAIT || finishing || (stage==Stage.BOKEH_WAIT && elapsed<550f)
     val progress get()=when(stage){Stage.COLOR_FINISH->(elapsed/COLOR_MS).coerceIn(0f,1f);Stage.BOKEH_FINISH->(elapsed/BOKEH_MS).coerceIn(0f,1f);else->0f}
     val bokehLift get()=when(stage){
         Stage.BOKEH_WAIT->DevelopMath.ease(elapsed/550f)*.78f
         Stage.BOKEH_FINISH->finishLift*(1-DevelopMath.ease(progress))
         else->0f
     }
-    private fun enter(next:Stage){if(next==Stage.BOKEH_FINISH)finishLift=bokehLift;stage=next;elapsed=0f}
+    /** Fade real region data/indicators in with the lift; a fast final must not flash a dark grid. */
+    val bokehDetail get()=when(stage){Stage.BOKEH_WAIT->DevelopMath.ease(elapsed/550f);Stage.BOKEH_FINISH->finishDetail;else->0f}
+    private fun enter(next:Stage){if(next==Stage.BOKEH_FINISH){finishLift=bokehLift;finishDetail=bokehDetail};stage=next;elapsed=0f}
     fun startColor(blur:Boolean){reset();blurRequested=blur;enter(Stage.COLOR_WAIT)}
     fun colorCompleted(){check(stage==Stage.COLOR_WAIT);colorReady=true;enter(Stage.COLOR_FINISH)}
     fun startBokeh(){
@@ -31,10 +37,10 @@ class DevelopMotion {
         bokehReady=true;blurRequested=true
         if(stage==Stage.IDLE || stage==Stage.COLOR_HOLD)enter(Stage.BOKEH_WAIT)
     }
-    /** Real intermediate data takes priority over queued decoration; never replay passes at the end. */
+    /** Retain actual progress immediately, but never truncate an in-flight color presentation. */
     fun bokehPassCompleted(){
         check(bokehReady && !finalReady)
-        if(stage==Stage.COLOR_FINISH || stage==Stage.COLOR_HOLD)enter(Stage.BOKEH_WAIT)
+        if(stage==Stage.COLOR_HOLD)enter(Stage.BOKEH_WAIT)
     }
     fun resultCompleted(rendered:Boolean){
         check(!finalReady && stage!=Stage.COLOR_WAIT)
@@ -62,7 +68,18 @@ class DevelopMotion {
         if(finalReady)enter(Stage.DONE)
         else if(stage==Stage.COLOR_FINISH && colorReady)enter(if(bokehReady)Stage.BOKEH_WAIT else Stage.COLOR_HOLD)
     }
-    fun reset(){stage=Stage.IDLE;elapsed=0f;seconds=0f;blurRequested=false;finalReady=false;colorReady=false;bokehReady=false;finishLift=0f}
+    fun reset(){stage=Stage.IDLE;elapsed=0f;seconds=0f;blurRequested=false;finalReady=false;colorReady=false;bokehReady=false;finishLift=0f;finishDetail=0f}
+}
+
+/** Monotonic display clock: dropped frames catch up, stopped/background time is never replayed. */
+class DevelopFrameClock {
+    private var last:Long?=null
+    fun tick(now:Long):Float {
+        require(now>=0);val before=last
+        if(before!=null && now<before)return 0f
+        last=now;return if(before==null)0f else (now-before).toFloat()
+    }
+    fun reset(){last=null}
 }
 
 /** Main-thread one-shot completion. Reset/close cancels instead of leaving an awaiting coroutine suspended. */
@@ -115,18 +132,19 @@ object DevelopMath {
     }
     /** Display-only lift = in-focus coverage UNION the actual refined subject protection.
      * Does not mutate depth, alpha, focus or the export renderer. Disabled keeps the old path. */
-    fun focusTiles(depth:LegendaryMath.Frame,point:LegendaryMath.Point,aperture:Float,w:Int,h:Int,cancel:Cancel,subjectMask:LegendaryMath.Frame?=null):FocusTiles? {
+    fun focusTiles(depth:LegendaryMath.Frame,point:LegendaryMath.Point,aperture:Float,w:Int,h:Int,cancel:Cancel,subjectMask:LegendaryMath.Frame?=null,displayGrid:Pair<Int,Int>?=null):FocusTiles? {
         cancel.check();require(w>0 && h>0 && depth.channels==1);FullFrameOptics.checkAperture(aperture)
         subjectMask?.let{require(it.channels==1);for(i in it.data.indices){if(i%it.w==0)cancel.check();require(it.data[i].isFinite() && it.data[i] in 0f..1f)}}
         val focus=LegendaryMath.focus(depth,point)?:return null
-        val gain=FullFrameOptics.radiusScale(focus,aperture,w,h);val accept=FullFrameOptics.acceptableRadius(w,h)
-        val (cx,cy)=DepthVisualMath.grid(w,h,22);val nx=cx.coerceAtMost(w);val ny=cy.coerceAtMost(h)
+        val field=FullFrameOptics.nativeCoc(depth,focus,aperture,w,h,cancel);val accept=FullFrameOptics.acceptableRadius(w,h)
+        displayGrid?.let{require(it.first in 1..32 && it.second in 1..32)}
+        val (cx,cy)=displayGrid?:DepthVisualMath.grid(w,h,22);val nx=if(displayGrid==null)cx.coerceAtMost(w)else cx;val ny=if(displayGrid==null)cy.coerceAtMost(h)else cy
         val values=FloatArray(nx*ny)
         for(y in 0 until ny)for(x in 0 until nx){
             cancel.check();var n=0f
             for(j in 0..2)for(i in 0..2){
                 val px=((x+(i+.5f)/3)/nx*(w-1)).roundToInt();val py=((y+(j+.5f)/3)/ny*(h-1)).roundToInt()
-                val coc=abs(FullFrameOptics.sample(depth,px,py,w,h)-focus)*gain
+                val coc=abs(FullFrameOptics.sample(field,px,py,w,h))
                 val optical=1-ease((coc-accept)/(accept*.65f))
                 val protected=subjectMask?.let{FullFrameOptics.sample(it,px,py,w,h).coerceIn(0f,1f)}?:0f
                 n+=max(optical,protected)

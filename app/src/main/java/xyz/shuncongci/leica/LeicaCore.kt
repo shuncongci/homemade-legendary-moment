@@ -102,7 +102,7 @@ internal fun parallelFor(n: Int, body: (Int) -> Unit) {
 
 /** User-selected final output for workflows that include bokeh. */
 enum class BokehOutput(val label:String,val longEdge:Int?) {
-    ORIGINAL("原图像素",null), SIZE_2048("2048出图",2048), SIZE_1024("1024出图",1024)
+    ORIGINAL("原图≤1250万",null), SIZE_2048("2048出图",2048), SIZE_1024("1024出图",1024)
 }
 object LeicaSizes {
     const val MODEL_LONG_EDGE = 1024
@@ -138,7 +138,7 @@ object LeicaSizes {
     }
     fun processingSize(width: Int,height: Int,blurEnabled: Boolean,output:BokehOutput=BokehOutput.SIZE_2048): Pair<Int,Int> {
         require(width>0 && height>0)
-        return if(blurEnabled)workingSize(width,height,output) else colorSize(width,height)
+        return if(blurEnabled){val p=workingSize(width,height,output);if(output==BokehOutput.ORIGINAL)BokehRenderPolicy.originalSize(p.first,p.second)else p}else colorSize(width,height)
     }
     /** GAN input and raw output have long edge 1024, ratio kept; bokeh/output options never change analysis size. */
     fun modelSize(width: Int,height: Int,blurEnabled: Boolean = false,output:BokehOutput=BokehOutput.SIZE_2048): Pair<Int,Int> {

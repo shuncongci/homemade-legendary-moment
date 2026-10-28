@@ -16,6 +16,7 @@ object CompositionExport {
         writeSized(out,sourceW,sourceH,crop,b.w,b.h,cancel,read)
     }
     /** Classify actual output alpha, then write RGB when opaque, RGBA otherwise. Reader must be immutable/repeatable. */
+    /** Borrows [out]: flushes a complete image but NEVER closes the caller's stream/descriptor. */
     fun writeSized(out:OutputStream,sourceW:Int,sourceH:Int,crop:CompositionGeometry.Crop,width:Int,height:Int,cancel:Cancel,
                    read:(NativeImageMath.Box)->IntArray) {
         var opaque=true
@@ -112,6 +113,6 @@ object CompositionExport {
             raw.copyInto(previous);count++
         }
         fun finish(){check(count==h);zip.finish();while(!zip.finished()){val n=zip.deflate(compressed);if(n>0)chunk("IDAT",compressed,n)};chunk("IEND",byteArrayOf());out.flush()}
-        override fun close(){zip.end();out.close()}
+        override fun close(){zip.end()} // finish() flushes success; caller owns sync/close/rollback.
     }
 }

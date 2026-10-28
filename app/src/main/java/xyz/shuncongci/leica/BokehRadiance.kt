@@ -31,7 +31,15 @@ object BokehRadiance {
         require(sharp.width==rendered.width && sharp.height==rendered.height)
         require(foreground.w==sharp.width && foreground.h==sharp.height && foreground.channels==3)
         val out=SubjectProtectionMath.composite(sharp,rendered,alpha,cancel)
-        val a=LegendaryMath.resize(alpha,sharp.width,sharp.height,cancel=cancel);val n=sharp.size
+        val a=LegendaryMath.resize(alpha,sharp.width,sharp.height,cancel=cancel)
+        return addIncoming(out,a,foreground,cancel,sourceHigh,sourceCoc)
+    }
+    /** Per-pixel last stage, separated so whole-photo edge recomposition can precede
+     * bounded, file-backed foreground reads. No second subject composite. */
+    internal fun addIncoming(out:Planes,a:Frame,foreground:Frame,cancel:Cancel,sourceHigh:Frame?=null,sourceCoc:Frame?=null):Planes {
+        val n=out.size
+        require(a.w==out.width && a.h==out.height && a.channels==1 && foreground.w==out.width && foreground.h==out.height && foreground.channels==3)
+        require((sourceHigh==null)==(sourceCoc==null))
         // Reference is unscattered prepared source radiance, before it spreads.
         // Sharp restoration already retains the corresponding local reflection.
         // Only an incoming SURPLUS can be missing after restoration; this also
@@ -42,7 +50,7 @@ object BokehRadiance {
             require(local.isFinite() && local>=0f)
             return max(0f,incoming-local)
         }
-        for(i in 0 until n){if(i%sharp.width==0)cancel.check();val weight=a.data[i].coerceIn(0f,1f);if(weight==0f)continue
+        for(i in 0 until n){if(i%out.width==0)cancel.check();val weight=a.data[i].coerceIn(0f,1f);if(weight==0f)continue
             var scale=1f
             for(ch in 0..2){val light=missing(ch*n+i,i)*weight;require(light.isFinite() && light>=0f)
                 if(light>0f)scale=min(scale,(1f-linear(out.plane(ch)[i].toInt() and 255))/light)

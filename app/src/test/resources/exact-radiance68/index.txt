@@ -1,0 +1,12 @@
+case0 1 1
+case1 1 29
+case2 31 1
+case3 79 67
+case4 83 129
+case5 97 73
+case6 59 43
+case7 61 47
+case8 53 41
+case9 71 39
+case10 67 37
+case11 65 33

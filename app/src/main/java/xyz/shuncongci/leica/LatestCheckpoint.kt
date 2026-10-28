@@ -49,10 +49,10 @@ class LatestCheckpoint(val directory:File, private val fault:(String)->Unit = {}
         healthy();commit(Properties().also{it.putAll(values)},meta,remove,blobs)
     }
     /** Compare and commit under the same per-directory lock; stale workers cannot settle a newer job. */
-    fun updateIf(expected:Map<String,String>,meta:Map<String,String>):Boolean = synchronized(lock){
+    fun updateIf(expected:Map<String,String>,meta:Map<String,String>,remove:Set<String> = emptySet(),blobs:Map<String,(File)->Unit> = emptyMap()):Boolean = synchronized(lock){
         healthy()
         if(expected.any{(k,v)->values.getProperty(k)!=v})return@synchronized false
-        commit(Properties().also{it.putAll(values)},meta,emptySet(),emptyMap());true
+        commit(Properties().also{it.putAll(values)},meta,remove,blobs);true
     }
     /** A new import is the only path that may replace an unreadable old manifest. */
     fun reset(meta:Map<String,String>,blobs:Map<String,(File)->Unit>)=synchronized(lock){

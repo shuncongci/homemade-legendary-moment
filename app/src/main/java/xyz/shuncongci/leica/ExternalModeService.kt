@@ -33,8 +33,8 @@ data class ExternalModeStatus(val running:Boolean=false,val ready:Boolean=false,
     fun description():String=buildString{
         append(stage);if(name.isNotEmpty())append("\n").append(name)
         append("\n已保存 ").append(saved).append(" 张 · 排队 ").append(queued).append(" 张 · 失败 ").append(failed).append(" 张")
-        if(working && currentStarted>0)append("\n本张已用时 ").append((SystemClock.elapsedRealtime()-currentStarted)/1000).append(" 秒 · 按实际阶段显示，非估算百分比")
-        if(deletedOriginals>0 || pendingOriginals>0 || retainedOriginals>0)append("\n原片已处置 ").append(deletedOriginals).append(" 张 · 待系统授权 ").append(pendingOriginals).append(" 张 · 未删除/需核对 ").append(retainedOriginals).append(" 张")
+        if(working && currentStarted>0)append("\n本张已用时 ").append((SystemClock.elapsedRealtime()-currentStarted)/1000).append(" 秒")
+        if(deletedOriginals>0 || pendingOriginals>0 || retainedOriginals>0)append("\n原片已删除 ").append(deletedOriginals).append(" 张 · 待系统授权 ").append(pendingOriginals).append(" 张 · 未删除/需核对 ").append(retainedOriginals).append(" 张")
         if(lastOriginalStatus.isNotEmpty())append("\n原片：").append(lastOriginalStatus)
         if(lastError.isNotEmpty())append("\n最近错误：").append(lastError)
     }
@@ -91,7 +91,7 @@ class ExternalModeService:Service() {
         if(intent?.action==STOP){requestStop();return START_NOT_STICKY}
         if(started)return START_NOT_STICKY
         started=true;settings=ExternalPreferences.load(this)
-        ExternalModeRuntime.update{it.copy(running=true,runId=run,stage="正在建立基线 · 现有照片全部跳过")}
+        ExternalModeRuntime.update{it.copy(running=true,runId=run,stage="正在准备监听 · 跳过已有照片")}
         try{
             val notification=notification()
             if(Build.VERSION.SDK_INT>=34)startForeground(ID,notification,ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE) else startForeground(ID,notification)
@@ -154,37 +154,41 @@ class ExternalModeService:Service() {
         var result:LeicaEngine.Result?=null
         var published=false
         var originalEligible=false
+        var diagnosticStage="读取原片"
         val wake=(getSystemService(Context.POWER_SERVICE) as PowerManager).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"$packageName:external-photo").apply{setReferenceCounted(false)}
         try{
             cancel.check();journal.state(job.id,"PROCESSING")
-            publish{it.copy(working=true,currentId=job.id,name=job.photo.name,stage="读取新增照片 · 等待写入稳定后建立私有副本",currentStarted=SystemClock.elapsedRealtime())}
+            publish{it.copy(working=true,currentId=job.id,name=job.photo.name,stage="正在读取新照片",currentStarted=SystemClock.elapsedRealtime())}
             wake.acquire(30*60*1000L)
             val source=ExternalPhotoInput.stage(File(work,"input"),job.photo,cancel,
                 observe={folders.find(checkNotNull(settings.folder),job.photo.key)},
                 open={photo->ExternalCaptureMetadata.openOriginal(this,android.net.Uri.parse(photo.uri))},
-                onWait={publish{it.copy(stage="本张新照片仍在写入 · 等待稳定，不读取其他旧照片")}})
+                onWait={publish{it.copy(stage="等待照片写入完成 · 正在核对")}})
             cancel.check()
             if(settings.original==ExternalOriginalPolicy.DELETE_AFTER_SAVE){
                 val snapshot=folders.find(checkNotNull(settings.folder),job.photo.key)?.takeIf{it.key==job.photo.key && it.uri==job.photo.uri && it.created>0 && it.created==job.photo.created && !it.pending && it.size==source.length()}
                 if(snapshot!=null){journal.rememberOriginal(job.id,snapshot,ExternalOriginalGuard.digest(source.inputStream()){cancel.check()});originalEligible=true}
             }
+            diagnosticStage="显影"
             val e=LeicaEngine(applicationContext,resultDirectory=File(work,"render"));engine=e
             cancel.cancelled=cancel.cancelled || stopping.get();cancel.check()
             result=e.process(android.net.Uri.fromFile(source),settings.style,cancel,blurEnabled=false,colorEnabled=true,subjectEnabled=false,hdrMode=settings.policy.mode()){message->
                 publish{it.copy(stage=message)}
             }
             cancel.check();publish{it.copy(stage=if(result.hdrReady)"导出 HDR · Ultra HDR JPEG"else "导出 SDR · ${settings.format.label}${result.hdrFallback.takeIf{v->v.isNotEmpty()}?.let{v->" · HDR不支持：$v"}.orEmpty()}")}
+            diagnosticStage="读取拍摄元数据"
             val metadata=ExternalCaptureMetadata.prepare(source,File(work,"metadata"),result.width,result.height,settings.metadataWatermark,cancel)
-            val output=exporter.save(job,result,settings.format,cancel,metadata.exif,File(work,"export"))
+            diagnosticStage="编码与保存成片"
+            val output=exporter.save(job,result,settings.format,cancel,metadata,File(work,"export"))
             published=true
             publish{it.copy(lastOutput=output)}
             if(settings.original==ExternalOriginalPolicy.DELETE_AFTER_SAVE){
                 val outcome=try{
                     cancel.check()
                     if(!originalEligible)OriginalOutcome(OriginalAction.CHANGED,"原片在复制后发生变化；成片已保存，原片未删除")
-                    else if(!metadata.complete)OriginalOutcome(OriginalAction.KEPT,"成片已保留可读取的拍摄EXIF，但无法完整核对所有源格式私有元数据；原片保留")
+                    else if(!ExternalDeletionConsent.canRemove(settings.original,settings.deletionConsent,metadata.verified))OriginalOutcome(OriginalAction.KEPT,"成片已保存；删除确认或成片校验未通过，原片保留")
                     else{
-                        publish{it.copy(stage="成片及元数据已保存 · 校验原片和已发布成片，再处置原片")}
+                        publish{it.copy(stage="成片已保存 · 核对文件后删除原片")}
                         // Expected output hash was pinned from the private verified file BEFORE publication.
                         // attempt() compares the published bytes to that pinned value; it never learns a new one.
                         ExternalSourceDeletion(this,journal).attempt(job.id,checkNotNull(settings.folder),cancel).result
@@ -193,16 +197,17 @@ class ExternalModeService:Service() {
                 catch(e:Exception){propagateFatalCause(e);OriginalOutcome(OriginalAction.FAILED,"成片已保存；原片安全校验未完成：${e.message}。未重试删除，请人工核对")}
                 journal.originalOutcome(job.id,outcome)
                 publish{it.copy(lastOriginalStatus=outcome.message)}
-            }else publish{it.copy(lastOriginalStatus="原片与成片同时保留${if(metadata.complete)"" else "；部分非EXIF/特殊格式私有扩展无法完整转存，原片已保留"}")}
+            }else publish{it.copy(lastOriginalStatus="原片与成片同时保留${if(metadata.complete)"" else "；部分附加数据未转存"}")}
         }catch(e:Exception){
             propagateFatalCause(e)
-            if(!published)journal.state(job.id,if(cancel.cancelled)"CANCELLED"else "FAILED",e.message.orEmpty())
+            val failure="$diagnosticStage · ${e.javaClass.simpleName}：${e.message.orEmpty()}"
+            if(!published)journal.state(job.id,if(cancel.cancelled)"CANCELLED"else "FAILED",failure)
             // A source-retention failure must never relabel/requeue a successfully published output.
-            if(!cancel.cancelled)publish{it.copy(lastError="${job.photo.name}：${e.message}")}
+            if(!cancel.cancelled)publish{it.copy(lastError="${job.photo.name}：$failure")}
         }finally{
             result?.original?.recycle();result?.result?.let{if(it!==result?.original)it.recycle()}
             try{engine?.close()}finally{engine=null;currentCancel=null;if(wake.isHeld)wake.release();work.deleteRecursively()}
-            publish{it.copy(working=false,name="",currentId="",stage=if(stopping.get())"正在停止并清理本张半成品"else "监听中 · 等待新增照片；旧照片不补跑")}
+            publish{it.copy(working=false,name="",currentId="",stage=if(stopping.get())"正在停止并清理本张半成品"else "监听中 · 等待新照片")}
             publishCounts()
         }
     }

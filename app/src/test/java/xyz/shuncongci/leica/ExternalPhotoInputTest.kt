@@ -8,9 +8,9 @@ import java.io.IOException
 import java.nio.file.Files
 import java.util.concurrent.CancellationException
 
-/** Byte-copy/settling tests use synthetic marker bytes, not a claim about Android camera codecs. */
+/** Byte-copy/settling tests use a real synthetic JPEG; this is not Android camera-codec acceptance. */
 class ExternalPhotoInputTest {
-    private val jpeg=byteArrayOf(0xff.toByte(),0xd8.toByte(),4,5,6,0xff.toByte(),0xd9.toByte())
+    private val jpeg=CaptureMetadataFixtures.jpeg
     private fun p(bytes:ByteArray)=ExternalPhoto("new-key","file:///new","NEW.jpg",bytes.size.toLong(),10)
     private fun <T> temporary(body:(File)->T):T {val dir=Files.createTempDirectory("external-input-test").toFile();return try{body(dir)}finally{dir.deleteRecursively()}}
     @Test fun validatesCompleteJpegMarkers()=temporary{d->val f=File(d,"test");f.writeBytes(jpeg);assertTrue(ExternalPhotoInput.completeJpeg(f))}
@@ -18,7 +18,7 @@ class ExternalPhotoInputTest {
     @Test fun rejectsNonJpegHead()=temporary{d->val f=File(d,"test");f.writeBytes(byteArrayOf(1,2,0xff.toByte(),0xd9.toByte()));assertFalse(ExternalPhotoInput.completeJpeg(f))}
     @Test fun exactPrivateCopyDoesNotModifyInput()=temporary{d->val input=jpeg.clone();val photo=p(input);val out=ExternalPhotoInput.stage(d,photo,Cancel(),{photo},{ByteArrayInputStream(input)},waitStable={error("Stable input must not wait")});assertArrayEquals(jpeg,out.readBytes());assertArrayEquals(jpeg,input)}
     @Test fun retriesOnlySameNewPhotoWhenMetadataChangesDuringCopy()=temporary{d->
-        val later=jpeg.copyOfRange(0,3)+byteArrayOf(7,8,9)+jpeg.copyOfRange(3,jpeg.size)
+        val later=jpeg.copyOfRange(0,2)+byteArrayOf(0xff.toByte(),0xfe.toByte(),0,5,7,8,9)+jpeg.copyOfRange(2,jpeg.size)
         var current=p(jpeg);var bytes=jpeg;var opens=0;var waits=0
         val out=ExternalPhotoInput.stage(d,current,Cancel(),{current},{
             val saved=bytes;opens++;if(opens==1){bytes=later;current=p(later).copy(modified=20)};ByteArrayInputStream(saved)

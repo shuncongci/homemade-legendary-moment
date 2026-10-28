@@ -16,7 +16,7 @@ object Lab {
     private fun sat(v: Double): Byte = Math.rint(v).toInt().coerceIn(0, 255).toByte()
 
     // Integer port of OpenCV RGB2Lab_b (color_lab.cpp). Verified on the PC against cv2 over all
-    // 16.7M 8-bit colours: max diff 1 (independent OpenCV reference).
+    // 16.7M 8-bit colours: max diff 1 (exhaustive comparison with OpenCV).
     private const val LAB_SHIFT = 12
     private const val GAMMA_SHIFT = 3
     private const val LAB_SHIFT2 = LAB_SHIFT + GAMMA_SHIFT

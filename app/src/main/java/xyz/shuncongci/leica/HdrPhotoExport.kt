@@ -17,10 +17,10 @@ import java.util.UUID
 /** Source/geometry-only export. Edited photos must use HdrPairExport's recomputed map instead. */
 object HdrPhotoExport {
     fun saveSource(context:Context,uri:Uri,crop:CompositionGeometry.Crop,cancel:Cancel,
-                   outputSize:Pair<Int,Int>,contentEdited:Boolean=false,badge:Boolean=false):String {
+                   outputSize:Pair<Int,Int>,contentEdited:Boolean=false,badge:Boolean=false,metadataSource:File?=null):String {
         HdrExportPolicy.unavailable(Build.VERSION.SDK_INT,contentEdited)?.let{error(it)}
         check(Build.VERSION.SDK_INT>=34)
-        return HdrPhotoExport34.save(context,uri,crop,cancel,outputSize,badge)
+        return HdrPhotoExport34.save(context,uri,crop,cancel,outputSize,badge,metadataSource)
     }
 }
 
@@ -81,7 +81,7 @@ internal object HdrPhotoExport34 {
         cancel.check();val readback=decode(context,uri)
         try{HdrExportPolicy.checkRoundTrip(expected,metadata(readback));cancel.check()}finally{readback.recycle()}
     }
-    fun save(context:Context,uri:Uri,crop:CompositionGeometry.Crop,cancel:Cancel,size:Pair<Int,Int>,badge:Boolean=false):String {
+    fun save(context:Context,uri:Uri,crop:CompositionGeometry.Crop,cancel:Cancel,size:Pair<Int,Int>,badge:Boolean=false,metadataSource:File?=null):String {
         val encoded=File.createTempFile("hdr-export-",".jpg",context.cacheDir)
         var temporary=encoded
         try {
@@ -90,7 +90,8 @@ internal object HdrPhotoExport34 {
                 if(!HdrAutoPolicy.canFallback(t))throw t
                 cancel.check();throw HdrUnsupportedException(t)
             }
-            if(badge)temporary=LeicaBadgeExport.marked(context,encoded,size.first,size.second,cancel)
+            if(metadataSource!=null)temporary=EditorExportMetadata.preserve(context,encoded,metadataSource,size,badge,cancel,outputSrgb=false)
+            else if(badge)temporary=LeicaBadgeExport.marked(context,encoded,size.first,size.second,cancel)
             val cr=context.contentResolver;val name="传奇一瞬-HDR-${System.currentTimeMillis()}-${UUID.randomUUID().toString().take(8)}.jpg"
             val values=ContentValues().apply{
                 put(MediaStore.Images.Media.DISPLAY_NAME,name);put(MediaStore.Images.Media.MIME_TYPE,"image/jpeg")

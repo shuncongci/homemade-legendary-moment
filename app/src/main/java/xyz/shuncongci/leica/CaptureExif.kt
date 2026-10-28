@@ -22,9 +22,13 @@ class CaptureExif(val bytes:ByteArray) {
     private fun bounds(offset:Long,length:Long):Int {require(offset>=0 && length>=0 && offset<=bytes.size.toLong()-length){"EXIF引用越界"};return offset.toInt()}
     private fun u16(offset:Int)=buffer.getShort(bounds(offset.toLong(),2)).toInt() and 65535
     private fun u32(offset:Int)=buffer.getInt(bounds(offset.toLong(),4)).toLong() and 0xffffffffL
-    fun entries(offset:Long):List<Entry>{
+    fun entries(offset:Long):List<Entry> = directoryEntries(offset,true)
+    private fun directoryEntries(offset:Long,hasNextImagePointer:Boolean):List<Entry>{
         if(offset==0L)return emptyList()
-        val start=bounds(offset,2);val n=u16(start);require(n<=4096){"EXIF字段过多"};bounds(offset+2,12L*n+4)
+        // The root/image IFD has a mandatory next-image slot. Exif/GPS/Interop are
+        // attribute directories reached by explicit tags; e.g. piexif omits that slot.
+        // Do not mistake bytes following their complete entries for an image link.
+        val start=bounds(offset,2);val n=u16(start);require(n<=4096){"EXIF字段过多"};bounds(offset+2,12L*n+if(hasNextImagePointer)4 else 0)
         return (0 until n).map{i->
             val pos=start+2+i*12;val type=u16(pos+2);val count=u32(pos+4)
             val length=Math.multiplyExact(count,when(type){1,2,6,7->1;3,8->2;4,9,11,13->4;5,10,12->8;else->error("未知EXIF字段类型$type，未静默丢弃")}.toLong())
@@ -38,10 +42,10 @@ class CaptureExif(val bytes:ByteArray) {
         require(it.type in setOf(4,13) && it.count==1L && it.value.size==4){"EXIF子目录指针无效"}
         ByteBuffer.wrap(it.value).order(order).int.toLong() and 0xffffffffL
     }?:0
-    fun exif()=entries(pointer(root(),0x8769))
-    fun gps()=entries(pointer(root(),0x8825))
+    fun exif()=directoryEntries(pointer(root(),0x8769),false)
+    fun gps()=directoryEntries(pointer(root(),0x8825),false)
     fun value(exifIfd:Boolean,tag:Int)=(if(exifIfd)exif()else root()).firstOrNull{it.tag==tag}?.value
-    fun normalized(width:Int,height:Int,patches:List<Patch> = emptyList()):ByteArray {
+    fun normalized(width:Int,height:Int,patches:List<Patch> = emptyList(),outputSrgb:Boolean=true):ByteArray {
         require(width>0 && height>0)
         val root=root().associateBy{it.tag}.toMutableMap()
         val exif=exif().associateBy{it.tag}.toMutableMap()
@@ -67,13 +71,13 @@ class CaptureExif(val bytes:ByteArray) {
         val geometry=setOf(0x102,0x103,0x106,0x111,0x115,0x116,0x117,0x11c,0x13d,0x142,0x143,0x144,0x145,0x14a,0x152,0x201,0x202,0x205,0x206,0x207,0x208,0x209,0x211,0x212,0x213,0x214,0x8773)
         geometry.forEach{root.remove(it)}
         root[0x100]=long(0x100,width);root[0x101]=long(0x101,height);root[0x112]=short(0x112,1)
-        exif[0xa002]=long(0xa002,width);exif[0xa003]=long(0xa003,height);exif[0xa001]=short(0xa001,1)
+        exif[0xa002]=long(0xa002,width);exif[0xa003]=long(0xa003,height);exif[0xa001]=short(0xa001,if(outputSrgb)1 else 65535)
         val interopPointer=pointer(exif.values.toList(),0xa005)
         val directories=listOf(u32(4),pointer(root.values.toList(),0x8769),pointer(root.values.toList(),0x8825),interopPointer).filter{it!=0L}
         require(directories.distinct().size==directories.size){"EXIF目录循环/别名冲突，未丢弃元数据继续处理"}
         if(interopPointer!=0L){
-            val interop=entries(interopPointer).associateBy{it.tag}.toMutableMap()
-            interop[1]=changed(1,2,byteArrayOf(82,57,56,0)) // R98: encoded base is sRGB, not source Display-P3
+            val interop=directoryEntries(interopPointer,false).associateBy{it.tag}.toMutableMap()
+            if(outputSrgb)interop[1]=changed(1,2,byteArrayOf(82,57,56,0)) else interop.remove(1) // destination ICC remains authoritative
             exif[0xa005]=long(0xa005,directory(interop.values))
         }
         patches.forEach{p->(if(p.exifIfd)exif else root)[p.tag]=changed(p.tag,p.type,p.value)}

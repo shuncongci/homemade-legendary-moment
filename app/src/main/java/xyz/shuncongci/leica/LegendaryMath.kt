@@ -93,7 +93,7 @@ object LegendaryMath {
     }
     private fun smooth(t: Float): Float { val x=t.coerceIn(0f,1f);return x*x*(3-2*x) }
     private fun linear(x: Float)=if(x<=.04045f)x/12.92f else ((x+.055f)/1.055f).pow(2.4f)
-    private fun srgb(x: Float)=if(x<=.0031308f)12.92f*max(x,0f) else 1.055f*max(x,0f).pow(1/2.4f)-.055f
+    internal fun srgb(x: Float)=if(x<=.0031308f)12.92f*max(x,0f) else 1.055f*max(x,0f).pow(1/2.4f)-.055f
     /** Exact byte-domain shortcut only; continuous Float32 values still use the original power function. */
     internal fun linearQuantized(x:Float):Float {
         if(!x.isFinite())return linear(x)
@@ -101,6 +101,20 @@ object LegendaryMath {
         return if(x.toRawBits()==(code/255f).toRawBits())HdrMath.linearByte(code)else linear(x)
     }
     private fun quantize(x: Float)=(Math.rint((x.coerceIn(0f,1f)*255).toDouble())/255).toFloat()
+    private val quantizedByteBase=FloatArray(256){quantize(srgb(HdrMath.linearByte(it)))}
+    /** Exact byte round trip, cached only for ratio==1; continuous values keep pow(). */
+    internal fun baseChannel(p:Planes,i:Int,cap:Float,c:Int):Float {
+        val r=HdrMath.linearByte(p.p0[i].toInt()and 255);val g=HdrMath.linearByte(p.p1[i].toInt()and 255);val b=HdrMath.linearByte(p.p2[i].toInt()and 255)
+        val ratio=min(1f,cap/max(max(r,max(g,b)),1e-8f))
+        return if(ratio==1f)quantizedByteBase[p.plane(c)[i].toInt()and 255] else quantize(srgb((if(c==0)r else if(c==1)g else b)*ratio))
+    }
+    /** Same quantized SDR split base, computed per pixel for bounded region I/O. */
+    internal fun basePixel(p:Planes,i:Int,cap:Float,out:FloatArray){
+        val r=HdrMath.linearByte(p.p0[i].toInt()and 255);val g=HdrMath.linearByte(p.p1[i].toInt()and 255);val b=HdrMath.linearByte(p.p2[i].toInt()and 255)
+        val ratio=min(1f,cap/max(max(r,max(g,b)),1e-8f))
+        if(ratio==1f){out[0]=quantizedByteBase[p.p0[i].toInt()and 255];out[1]=quantizedByteBase[p.p1[i].toInt()and 255];out[2]=quantizedByteBase[p.p2[i].toInt()and 255]}
+        else {out[0]=quantize(srgb(r*ratio));out[1]=quantize(srgb(g*ratio));out[2]=quantize(srgb(b*ratio))}
+    }
     internal fun split(p: Planes,cancel:Cancel): Pair<Frame,Frame> {
         val caps=HighlightExtraction.caps(p,cancel)
         val size=p.size;val base=Frame(p.width,p.height,3,FloatArray(size*3));val high=Frame(p.width,p.height,3,FloatArray(size*3))
@@ -114,6 +128,18 @@ object LegendaryMath {
     }
     /** Render one whole 2048-fit photo; optical multiscale passes are not image tiles. */
     private fun multiscale(rgb: Frame,coc: Frame,cancel: Cancel,globalScales: FloatArray?,onPass:((Frame)->Unit)?,checkpoint:MultiscaleCheckpoint?,infer: (Frame,Frame)->Frame): Frame {
+        if(infer is FullCocRenderer){
+            require(globalScales==null){"整图分层算法不接受神经模型尺度"}
+            cancel.check()
+            val saved=checkpoint?.load()
+            val restored=saved?.takeIf{it.finished && it.index==1 && it.scale==1f && it.previous==1f}?.composite
+            val output=restored ?: infer(rgb,coc)
+            require(output.w==rgb.w && output.h==rgb.h && output.channels==3 && output.data.all{it.isFinite() && it in 0f..1f}){"分层虚化输出异常"}
+            if(restored==null)checkpoint?.save(MultiscaleCheckpoint.State(1f,1f,1,true,output),cancel)
+            // Same persistence/borrowed-preview/cancellation contract as the neural path.
+            cancel.check();onPass?.invoke(output);cancel.check()
+            return output
+        }
         val target=max(1f,coc.data.maxOf{abs(it)}/8)
         var scale=1f;var previous=1f;var composite: Frame?=null;var index=0
         require(globalScales==null || (globalScales.isNotEmpty() && globalScales.all{it.isFinite() && it>=1f}))

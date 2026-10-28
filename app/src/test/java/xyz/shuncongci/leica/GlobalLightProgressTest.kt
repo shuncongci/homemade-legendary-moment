@@ -1,0 +1,73 @@
+package xyz.shuncongci.leica
+
+import org.junit.Assert.*
+import org.junit.Test
+import java.io.File
+import java.nio.file.Files
+import java.util.concurrent.CancellationException
+import xyz.shuncongci.leica.LegendaryMath.Frame
+import kotlin.math.*
+
+class GlobalLightProgressTest {
+    private fun <T> cache(run:(File)->T):T{val d=Files.createTempDirectory("global-lights-").toFile();return try{run(d)}finally{d.walkBottomUp().forEach{it.delete()}}}
+    private fun photo(w:Int=157,h:Int=113)=Planes(w,h).also{p->
+        for(y in 0 until h)for(x in 0 until w)for(c in 0..2)p.plane(c)[y*w+x]=(25+(x*13+y*7+c*33)%130).toByte()
+        for((x,y) in listOf(w/2 to h/2,w/2-2 to h/3,w/3 to h/2-2,w-2 to h-2))
+            for(yy in max(0,y-1)..min(h-1,y+1))for(xx in max(0,x-1)..min(w-1,x+1))for(c in 0..2)p.plane(c)[yy*w+xx]=(if(c==2)244 else 255).toByte()
+    }
+    private fun depth()=Frame(17,13,1,FloatArray(221){i->(.5+.4*sin(i*.1)).toFloat()})
+    private fun light(w:Int=87,h:Int=61)=Frame(w,h,3,FloatArray(w*h*3){i->if((i*13)%31<3)(i%17+1)*.13f else 0f})
+    private fun coc(w:Int=87,h:Int=61)=Frame(w,h,1,FloatArray(w*h){i->(-3.2+6.7*(i%w).toDouble()/max(1,w-1)).toFloat()})
+    private fun plane(f:Frame,c:Int)=Frame(f.w,f.h,1,f.data.copyOfRange(c*f.size,(c+1)*f.size))
+    private fun equal(a:Planes,b:Planes){for(c in 0..2)for(i in 0 until a.size)assertTrue(abs((a.plane(c)[i].toInt()and 255)-(b.plane(c)[i].toInt()and 255))<=1)}
+    private fun scalarOptics(w:Int,h:Int,ap:Float,oneColor:Boolean=false){val rgb=light(w,h);if(oneColor)for(i in rgb.size until rgb.data.size)rgb.data[i]=0f;val co=coc(w,h);val expected=HighlightScatter.opticalLayers(rgb,co,ap,Cancel())
+        for(c in 0..2){val fg=Frame(w,h,1,FloatArray(w*h));val scaled=Frame(w,h,1,FloatArray(w*h){co.data[it]*3f});val actual=HighlightScatter.opticalPlaneScaled(plane(rgb,c),scaled,ap,Cancel(),fg)
+            assertArrayEquals(plane(expected.color,c).data,actual.data,0f);assertArrayEquals(plane(expected.foreground,c).data,fg.data,0f)
+        }
+    }
+    @Test fun fourRegionsContainExactlySixtyFourDisplayCells(){val s=BokehLayerReveal(2852,4380,true);assertEquals(8,s.cols);assertEquals(8,s.rows);assertEquals(4,s.parts);for(p in 0..3)assertEquals(16,(0 until 64).count{s.partForCell(it)==p})}
+    @Test fun oneRegionUsesOneSixteenCellGrid(){val s=BokehLayerReveal(1333,2048,false);assertEquals(4,s.cols);assertEquals(4,s.rows);assertEquals(1,s.parts)}
+    @Test fun firstFourLayersUnlockExactlyOneCell(){val s=BokehLayerReveal(100,80,true);assertTrue(s.accept(BokehLayerProgress(1,4,4,64)));assertEquals(1,s.litCount(1));assertEquals(1,(0 until 64).count{s.isLit(it)})}
+    @Test fun lessThanFourLayersDoNotLightACell(){val s=BokehLayerReveal(100,80,true);for(n in 1..3)s.accept(BokehLayerProgress(1,4,n,64));assertEquals(0,s.litCount(1))}
+    @Test fun everyFourLayersUnlockOneOfSixteen(){val s=BokehLayerReveal(100,80,true);for(n in 4..64 step 4){assertTrue(s.accept(BokehLayerProgress(1,4,n,64)));assertEquals(n/4,s.litCount(1));assertEquals(n/4,(0 until 64).count{s.isLit(it)})}}
+    @Test fun allFourPartsProgressIndependently(){val s=BokehLayerReveal(100,80,true);for(p in 1..4){for(n in 4..64 step 4)s.accept(BokehLayerProgress(p,4,n,64));assertEquals(p*16,(0 until 64).count{s.isLit(it)});assertTrue(s.partCompleted(p))}}
+    @Test fun eachGridKeepsItsCorrectMacroPosition(){val s=BokehLayerReveal(100,80,true);assertEquals(0,s.partForCell(0));assertEquals(1,s.partForCell(4));assertEquals(2,s.partForCell(32));assertEquals(3,s.partForCell(36));assertEquals(15,s.localCell(63))}
+    @Test fun layerProgressDoesNotPretendTheBasePixelsAreReady(){val s=BokehLayerReveal(100,80,true);s.accept(BokehLayerProgress(1,4,64,64));assertTrue(s.isLit(0));assertFalse(s.hasBase(0));s.partCompleted(1);assertTrue(s.hasBase(0))}
+    @Test fun shortcutLightsOnlyAfterActualBaseCompletion(){val s=BokehLayerReveal(100,80,true);assertEquals(0,s.litCount(1));s.advance(1e8f);assertEquals(0,s.litCount(1));assertTrue(s.partCompleted(1));assertEquals(16,s.litCount(1))}
+    @Test fun uniformSingleLayerIsNotRelabelledAsSixtyFour(){val p=BokehLayerProgress(1,1,1,1);assertEquals(1,p.layers);assertEquals(16,p.cells);val s=BokehLayerReveal(100,80,false);assertTrue(s.accept(p));assertEquals(16,s.litCount(1))}
+    @Test fun subUlpTwoLayerPathIsHonest(){val s=BokehLayerReveal(100,80,false);s.accept(BokehLayerProgress(1,1,1,2));assertEquals(8,s.litCount(1));s.accept(BokehLayerProgress(1,1,2,2));assertEquals(16,s.litCount(1))}
+    @Test fun duplicatesAndRegressionsAreIgnored(){val s=BokehLayerReveal(100,80,true);assertTrue(s.accept(BokehLayerProgress(1,4,8,64)));assertFalse(s.accept(BokehLayerProgress(1,4,8,64)));assertFalse(s.accept(BokehLayerProgress(1,4,4,64)));assertEquals(2,s.litCount(1))}
+    @Test fun futurePartAndChangedTotalAreRejected(){val s=BokehLayerReveal(100,80,true);assertFalse(s.accept(BokehLayerProgress(2,4,4,64)));assertTrue(s.accept(BokehLayerProgress(1,4,4,64)));assertFalse(s.accept(BokehLayerProgress(1,4,8,32)))}
+    @Test fun completedPartCannotBeReplayed(){val s=BokehLayerReveal(100,80,true);s.partCompleted(1);assertFalse(s.partCompleted(1));assertFalse(s.accept(BokehLayerProgress(1,4,4,64)))}
+    @Test fun progressAndStaticLightDoNotNeedContinuousFrames(){val s=BokehLayerReveal(100,80,true);assertFalse(s.needsFrames);s.accept(BokehLayerProgress(1,4,4,64));assertTrue(s.needsFrames);assertEquals(0f,s.dark(0),0f);assertEquals(.52f,s.dark(1),0f);val peak=s.glow(0);s.advance(601f);assertFalse(s.needsFrames);assertTrue(s.glow(0)<peak);assertTrue(s.glow(0)>.01f)}
+    @Test fun reduceMotionDoesNotManufactureCompletedLayers(){val s=BokehLayerReveal(100,80,true);s.accept(BokehLayerProgress(1,4,8,64));s.settle();assertEquals(2,s.litCount(1));assertFalse(s.needsFrames);assertFalse(s.isLit(2))}
+    @Test fun newRunCannotReuseOldLayerFlags(){val s=BokehLayerReveal(100,80,true);s.partCompleted(1);assertEquals(0,BokehLayerReveal(100,80,true).litCount(1))}
+    @Test(expected=IllegalArgumentException::class) fun impossibleLayerProgressRejected(){BokehLayerProgress(1,4,65,64)}
+    @Test fun fixedProgressGridPreservesFocusLift(){val d=Frame(9,9,1,FloatArray(81){i->if(i%9<5).4f else .9f});val f=DevelopMath.focusTiles(d,LegendaryMath.Point(.25f,.5f),2.8f,1000,800,Cancel(),displayGrid=8 to 8)!!;assertEquals(8,f.cols);assertEquals(8,f.rows);assertTrue(f.values[0]>f.values[7]);val a=FloatArray(3);val b=FloatArray(3);DevelopMath.project(.25f,.5f,1f,.78f,1.25f,a);DevelopMath.project(.25f,.5f,0f,.78f,1.25f,b);assertTrue(a[2]>b[2])}
+    @Test fun thinPhotosStillHaveSixteenIndicatorsPerRegion(){for((w,h) in listOf(1 to 19,19 to 1,1 to 1)){val s=BokehLayerReveal(w,h,true);assertEquals(s.parts*16,s.cols*s.rows)}}
+    @Test fun globalHighProgressRetainsChannelNumbersWithoutMacroIds(){for(name in listOf("SDR高光","SDR柔边","HDR增光","HDR减光","HDR柔边")){val s="$name · 2/3通道";assertEquals(s,EditorPresentation.stage("6/7 $s"));assertFalse(s.contains("/4"));assertEquals(name,BokehProgress.key(s))}}
+    @Test fun globalExtractionIsAnActualDistinctStep(){assertEquals("SDR高光 · 提取光能",EditorPresentation.stage("6/7 SDR高光 · 提取光能"));assertNull(BokehProgress.bar("6/7 SDR高光 · 2/3通道"))}
+    @Test fun rgbAndScalarPupilOutputsAreBitExact(){scalarOptics(87,61,.95f)}
+    @Test fun scalarPupilIsExactAtOtherApertures(){scalarOptics(91,73,2.8f);scalarOptics(73,51,5.6f)}
+    @Test fun scalarPupilIsExactWhenOtherChannelsAreBlack(){scalarOptics(83,57,.95f,true)}
+    @Test fun scalarPupilKeepsThinBorderReflection(){scalarOptics(1,29,2.8f);scalarOptics(31,1,2.8f)}
+    @Test fun scalarSofteningEqualsEachRgbChannel(){val rgb=light();val co=coc();val expected=SoftBokehEdges.soften(rgb,co,Cancel());for(c in 0..2){val a=plane(rgb,c);SoftBokehEdges.softenInPlace(a,co,Cancel());assertArrayEquals(plane(expected,c).data,a.data,0f)}}
+    @Test fun scalarZeroAndFocalLightsStayBitExact(){val a=Frame(47,39,1,FloatArray(47*39){if(it%7==0)2.3f else 0f});val before=a.data.copyOf();SoftBokehEdges.softenInPlace(a,Frame(47,39,1,FloatArray(47*39){.1f}),Cancel());assertArrayEquals(before,a.data,0f)}
+    @Test fun peakDensityEqualsOriginalRgbDensity(){val p=photo();val hi=light(p.width,p.height);val co=coc(p.width,p.height);val peak=Frame(p.width,p.height,1,FloatArray(p.size){i->max(hi.data[i],max(hi.data[p.size+i],hi.data[2*p.size+i]))});val a=ClippedHighlights.gains(p,hi,co,Cancel());val b=ClippedHighlights.gainsFromPeak(p,peak,co,Cancel());assertNotNull(a);assertArrayEquals(a!!,b!!,0f)}
+    @Test fun rendererReportsSixteenActualFourLayerStepsPerPart(){cache{d->val events=arrayListOf<BokehLayerProgress>();FourTileBokeh.render(photo(),depth(),.38f,.95f,Cancel(),d,onLayer={events.add(it)});for(p in 1..4){val e=events.filter{it.part==p};assertEquals((4..64 step 4).toList(),e.map{it.done});assertTrue(e.all{it.layers==64 && it.parts==4})}}}
+    @Test fun highStagesBeginOnlyAfterAllBaseParts(){cache{d->var parts=0;val seen=arrayListOf<String>();FourTileBokeh.render(photo(),depth(),.38f,.95f,Cancel(),d,onPart={n,_->parts=n},progress={s->if(s.startsWith("SDR高光")){assertEquals(4,parts);seen.add(s)}});assertEquals(1,seen.count{it=="SDR高光 · 提取光能"});assertEquals(1,seen.count{it=="SDR高光 · 光能散射"});assertFalse(seen.any{it.contains("通道")});assertTrue(seen.any{it.endsWith("级")});assertFalse(seen.any{it.contains("/4")})}}
+    @Test fun hdrHasOneGlobalPositiveAndNegativeExtraction(){cache{d->val p=photo(77,59);val stages=arrayListOf<String>();FourTileBokeh.render(p,depth(),.38f,.95f,Cancel(),d,sharp=HdrPixels.of(Frame(p.width,p.height,3,FloatArray(p.size*3){if(it%2==0)2.7f else .01f})),hdrTarget=File(d,"hdr"),progress={stages.add(it)});assertEquals(1,stages.count{it=="HDR增光 · 提取光能"});assertEquals(1,stages.count{it=="HDR减光 · 提取光能"});assertFalse(stages.any{it.contains("/4 · HDR")})}}
+    @Test fun partTimesNowExcludeGlobalHighWork(){cache{d->var report:BokehRunReport?=null;FourTileBokeh.render(photo(),depth(),.38f,.95f,Cancel(),d,onReport={report=it});assertTrue(report!!.summary().contains("基础虚化"));assertTrue(report!!.parts.all{!it.steps.contains("高光") && it.steps.contains("虚化")})}}
+    @Test fun singleRegionKeepsSixtyFourHonestLayers(){cache{d->val events=arrayListOf<BokehLayerProgress>();FourTileBokeh.render(photo(),depth(),.38f,.95f,Cancel(),d,split=false,onLayer={events.add(it)});assertEquals(16,events.size);assertTrue(events.all{it.parts==1 && it.part==1 && it.layers==64})}}
+    @Test fun zeroDefocusDoesNotInventSixtyFourCallbacks(){cache{d->val p=photo();val events=arrayListOf<BokehLayerProgress>();var parts=0;val out=FourTileBokeh.render(p,Frame(3,3,1,FloatArray(9){.38f}),.38f,.95f,Cancel(),d,onLayer={events.add(it)},onPart={n,_->parts=n});equal(p,out);assertTrue(events.isEmpty());assertEquals(4,parts)}}
+    @Test fun layerCallbackCancellationCleansEverything(){cache{d->val c=Cancel();var events=0;try{FourTileBokeh.render(photo(),depth(),.38f,.95f,c,d,onLayer={events++;c.cancelled=true});fail()}catch(_:CancellationException){};assertEquals(1,events);assertTrue(d.list()!!.isEmpty())}}
+    @Test fun globalHighlightCancellationDoesNotPublishHdr(){cache{d->val p=photo();val c=Cancel();val f=File(d,"hdr");try{FourTileBokeh.render(p,depth(),.38f,.95f,c,d,sharp=HdrPixels.of(Frame(p.width,p.height,3,FloatArray(p.size*3){2f})),hdrTarget=f,progress={if(it.startsWith("HDR增光"))c.cancelled=true});fail()}catch(_:CancellationException){};assertFalse(f.exists());assertTrue(d.list()!!.isEmpty())}}
+    @Test fun sourceAndDepthAreNeverMutated(){cache{d->val p=photo();val before=Array(3){p.plane(it).copyOf()};val dep=depth();val db=dep.data.copyOf();FourTileBokeh.render(p,dep,.38f,.95f,Cancel(),d,onLayer={});for(c in 0..2)assertArrayEquals(before[c],p.plane(c));assertArrayEquals(db,dep.data,0f)}}
+    @Test fun fullPhotoGlobalMathMatchesPriorFullRgbReference(){cache{d->val p=photo();val dep=depth();val reference=object:FullCocRenderer{override fun invoke(a:Frame,c:Frame)=LayeredBokeh.render(a,c,Cancel())};val expected=LegendaryMath.render(p,dep,.38f,.95f,Cancel(),infer=reference);equal(expected,FourTileBokeh.render(p,dep,.38f,.95f,Cancel(),d))}}
+    @Test fun streamedRgbAndForegroundAreBitExactToFullRgb(){cache{d->val rgb=light(89,131);val co=coc(89,131);val expected=HighlightScatter.opticalLayers(rgb,co,.95f,Cancel());val color=File(d,"color");val fg=File(d,"foreground");BokehFloatFile.create(color,89,131,3).use{c->BokehFloatFile.create(fg,89,131,3).use{f->HighlightScatter.opticalFiles(rgb,Frame(89,131,1,FloatArray(co.size){co.data[it]*3f}),.95f,Cancel(),c,f)}};BokehFloatFile.open(color).use{assertArrayEquals(expected.color.data,it.read(it.whole,Cancel()).data,0f)};BokehFloatFile.open(fg).use{assertArrayEquals(expected.foreground.data,it.read(it.whole,Cancel()).data,0f)};assertEquals(setOf("color","foreground"),d.list()!!.toSet())}}
+    @Test fun streamedRgbHandlesTheLastShortReceiverBand(){cache{d->val rgb=light(31,67);val co=coc(31,67);val expected=HighlightScatter.optical(rgb,co,2.8f,Cancel());val file=File(d,"color");BokehFloatFile.create(file,31,67,3).use{HighlightScatter.opticalFiles(rgb,Frame(31,67,1,FloatArray(co.size){co.data[it]*3f}),2.8f,Cancel(),it,null)};BokehFloatFile.open(file).use{assertArrayEquals(expected.data,it.read(it.whole,Cancel()).data,0f)}}}
+    @Test fun streamedAccumulatorCancellationCleansItsOwnedFiles(){cache{d->val rgb=light(31,67);val co=coc(31,67);val cancel=Cancel();val color=File(d,"color");try{BokehFloatFile.create(color,31,67,3).use{HighlightScatter.opticalFiles(rgb,Frame(31,67,1,FloatArray(co.size){co.data[it]*3f}),2.8f,cancel,it,null){_,_->cancel.cancelled=true}};fail()}catch(_:CancellationException){};assertEquals(setOf("color"),d.list()!!.toSet())}}
+    @Test fun contiguousBandIoKeepsOriginalFloatLayout(){cache{d->val file=File(d,"rows");val data=FloatArray(3*7*3){it*.03125f};BokehFloatFile.create(file,3,7,3).use{f->for(c in 0..2){f.putRows(c,0,5,data,Cancel(),c*21);f.putRows(c,5,2,data,Cancel(),c*21+15)}};BokehFloatFile.open(file).use{assertArrayEquals(data,it.read(it.whole,Cancel()).data,0f);val a=FloatArray(6);it.rows(2,5,2,a,Cancel());assertArrayEquals(data.copyOfRange(57,63),a,0f)}}}
+    @Test fun contiguousWriteDoesNotTurnReadonlyOpenIntoWriter(){cache{d->val file=File(d,"rows");BokehFloatFile.create(file,3,2,1).close();BokehFloatFile.open(file).use{try{it.putRows(0,0,2,FloatArray(6),Cancel());fail()}catch(_:java.nio.channels.NonWritableChannelException){}};BokehFloatFile.open(file).use{assertArrayEquals(FloatArray(6),it.read(it.whole,Cancel()).data,0f)}}}
+    @Test fun retainedPreviewQueueRemainsOne640EdgeImage(){cache{d->var bytes=0L;FourTileBokeh.render(photo(),depth(),.38f,.95f,Cancel(),d,onPreview={bytes+=it.pixels.size*4L});assertTrue(bytes<=640L*640*4)}}
+}

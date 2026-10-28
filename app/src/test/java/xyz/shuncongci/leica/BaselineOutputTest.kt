@@ -6,13 +6,14 @@ import org.junit.Test
 /** New coverage only for UI/output options; baseline fast pipeline tests remain. */
 class BaselineOutputTest {
     @Test fun labelsAndDefaultAreExact(){
-        assertEquals(listOf("原图像素","2048出图","1024出图"),BokehOutput.entries.map{it.label})
+        assertEquals(listOf("原图≤1250万","2048出图","1024出图"),BokehOutput.entries.map{it.label})
         assertEquals(2048 to 1536,LeicaSizes.processingSize(4000,3000,true))
     }
     @Test fun originalOutputKeepsEntirePhotoAndExifAxes(){
         for((w,h) in listOf(4000 to 3000,3000 to 4000,6000 to 4000,360 to 480)){
             assertEquals(w to h,LeicaSizes.workingSize(w,h,BokehOutput.ORIGINAL))
-            assertEquals(w to h,LeicaSizes.processingSize(w,h,true,BokehOutput.ORIGINAL))
+            // User now explicitly caps the ORIGINAL bokeh workflow at 12.5 MP.
+            assertEquals(if(w==6000)4330 to 2886 else w to h,LeicaSizes.processingSize(w,h,true,BokehOutput.ORIGINAL))
         }
     }
     @Test fun default2048PreservesFastBaselineSizing(){
@@ -99,7 +100,7 @@ class BaselineOutputTest {
         }
         assertEquals(2048 to 1536,LeicaSizes.processingSize(16384,12288,true,BokehOutput.SIZE_2048))
         assertEquals(1024 to 768,LeicaSizes.processingSize(16384,12288,true,BokehOutput.SIZE_1024))
-        assertEquals(16384 to 12288,LeicaSizes.processingSize(16384,12288,true,BokehOutput.ORIGINAL))
+        assertEquals(4082 to 3061,LeicaSizes.processingSize(16384,12288,true,BokehOutput.ORIGINAL))
         assertEquals(1024 to 768,LeicaSizes.modelSize(16384,12288))
     }
     @Test fun colorModelLongEdgeIsBoundedForExtremeAspectRatios(){

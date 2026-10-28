@@ -107,6 +107,15 @@ object SubjectSelectionMath {
         cancel.check()
         return out?.let{Frame(w,h,1,it)}?:union
     }
+    /** A user positive prompt remains a hard foreground constraint after morphology.
+     * Only a SAM-confirmed foreground pixel may be seeded; no disks, neighbouring background,
+     * alternate subject or failed candidate are painted in to hide a coverage failure. */
+    fun positiveTrimap(mask:Frame,points:List<Point>,cancel:Cancel):FloatArray {
+        cancel.check();key(points);requireCovered(mask,points)
+        val trimap=SubjectProtectionMath.trimap(mask,cancel)
+        for(point in points){cancel.check();trimap[index(point,mask.w,mask.h)]=1f}
+        return trimap
+    }
     fun requireCovered(alpha:Frame,points:List<Point>) {
         require(alpha.channels==1);key(points)
         points.forEachIndexed{at,point->require(alpha.data[index(point,alpha.w,alpha.h)]>=.5f){"第${at+1}个保护点在细化后未被覆盖，请调整该点后统一计算"}}

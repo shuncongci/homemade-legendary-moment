@@ -19,6 +19,8 @@ class PhotoImports(private val context:Context):AutoCloseable {
     }
     private fun open(uri:Uri):InputStream {
         val resolver=context.contentResolver
+        // MediaStore must provide original capture GPS, never silently import its redacted rendition.
+        if(PhotoImportPolicy.original(android.os.Build.VERSION.SDK_INT,uri.scheme,uri.authority,uri.pathSegments.firstOrNull()))return ExternalCaptureMetadata.openOriginal(context,uri)
         try { return resolver.openInputStream(uri) ?: throw FileNotFoundException("照片来源没有返回数据") }
         catch(first:FileNotFoundException) {
             // Some document providers offer a typed file instead of a regular descriptor.
@@ -33,9 +35,9 @@ class PhotoImports(private val context:Context):AutoCloseable {
     fun import(uri:Uri,check:()->Unit = {}):Uri {
         try { return Uri.fromFile(PhotoCopy.stage(directory,{open(uri)},check)) }
         catch(e:FileNotFoundException) {
-            throw IllegalArgumentException("照片来源已失效或文件尚未下载。请用“系统文件”重新选择本机照片；不会改动原图。",e)
+            throw IllegalArgumentException(PhotoImportPolicy.MISSING,e)
         } catch(e:SecurityException) {
-            throw IllegalArgumentException("照片读取授权已失效，请用“系统文件”重新选择照片。",e)
+            throw IllegalArgumentException(PhotoImportPolicy.PERMISSION,e)
         }
     }
     override fun close(){directory.deleteRecursively()}

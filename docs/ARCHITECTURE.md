@@ -1,6 +1,6 @@
 # 实现说明
 
-这份说明介绍我发布的 2.6.0 源码中的处理链路、工作尺寸和已知限制，供阅读或修改代码时参考。
+这份说明介绍我发布的 2.8 源码中的处理链路、工作尺寸和已知限制，供阅读或修改代码时参考。
 
 主要代码在 app/src/main/java/xyz/shuncongci/leica。界面入口是 LeicaActivity.kt；LeicaEngine.kt 负责模型会话和处理链路。PhotoFlow.kt、PhotoWorkflow.kt 管理当前照片、处理方式和请求状态，界面操作不应直接绕过这些状态。
 
@@ -66,7 +66,7 @@ PureLut.kt 提供无 Android 依赖的通用三线性查表：PLUT0001、big-end
 
 verifyLeicaMath 运行不依赖 Android 设备的 JUnit 测试。我随源码提供的 leica 测试数据由程序生成，沿用旧文件名仅为兼容测试引用；其中 expected 图不是神经网络推理结果。其余历史数值夹具原样保留。
 
-公开 2.6.0（versionCode 61）已通过 1659 项 JVM 测试、Release Kotlin 和 AndroidTest Kotlin 编译、未签名 Release 构建；本机使用同版本官方 ONNX Runtime 1.28.0 AAR 的显式离线覆盖。构建前后公开源码摘要一致，原测试和合成夹具未改。公开版没有私有风格相关的 72 项测试，因此项数不与私有安装包的 1731 项混用。未安装或运行手机，没有实际操作用户照片；编译通过不代表真实模型齐全、通知/后台行为、相册识别、HDR 显示或 50MP 总内存已验收。
+公开 2.8（versionCode 78）已通过 2318 项 JVM 测试、Release Kotlin 和 AndroidTest Kotlin 编译、未签名 Release 构建；本机使用同版本官方 ONNX Runtime 1.28.0 AAR 的显式离线覆盖。构建前后公开源码摘要一致。公开版不包含私有风格相关的 72 项测试，不能与私有安装包的 2390 项混用。AndroidTest 仅编译，未安装或运行手机，未操作用户照片；不代表真实模型齐全或系统权限、相册、HDR 显示、动画和 50MP 总内存已经验收。
 
 ## 2.6.0 外接、元数据与呈现
 
@@ -77,3 +77,9 @@ CaptureExif / CaptureMetadataContainer 按容器写入本张来源的拍摄 EXIF
 EditorPresentation / EditorLayout 用真实视图滑动与裁剪维护布局；DevelopView 在真实成片就绪后保持最后一帧并连续缩放/裁剪交接，不把 HDR 照片截图为 SDR 做转场。DiagnosticsPanel / LiveDiagnostics 提供指标卡片与按需详情；RuntimeMonitor 提供可选静音参数通知，编辑与外接偏好独立。
 
 这些变化不加入私有风格路径，冷暖两份模型和其哈希保持不变。使用和权限边界见 [外接与编辑说明](EXTERNAL-MODE.md)。
+
+## 2.8 同步补充
+
+ExternalDeletionConsent 将删除授权版本与元数据完整性分开：旧授权回到保留原片，重新同意后以 verified 回读结果进入后续删除检查，而不是伪造 complete。ExternalMetadataTransfer 仍如实记录完整性，原片与成片指纹、发布、取消、系统授权及停止/重启保护保留。
+
+同步 2.6.0 之后的仅新增输入稳定性、PNG 同步、JPEG/EXIF/XMP 与源增益归档兼容修复；相册选择器权限分流、忙碌选图保留、完整组/区域检查点、远焦 d² 映射和逐点主体约束，以及调色到虚化的连续呈现。检查点不是任意指令续算；性能取决于输入和设备，不承诺每场景更快。

@@ -27,6 +27,11 @@ object OpticalPupil {
         }
         return axis(h).flatMap{(y,wy)->axis(w).map{(x,wx)->Node(x,y,wx,wy,wx.indexOfFirst{it>0f},wx.indexOfLast{it>0f})}}
     }
+    internal fun nodes(region:BokehRegion):List<Node> = nodes(region.fullW,region.fullH).mapNotNull{n->
+        val wx=n.wx.copyOfRange(region.box.left,region.box.right);val wy=n.wy.copyOfRange(region.box.top,region.box.bottom)
+        val lo=wx.indexOfFirst{it>0f};val hi=wx.indexOfLast{it>0f}
+        if(lo<0 || wy.none{it>0f})null else Node(n.x,n.y,wx,wy,lo,hi)
+    }
     internal fun kernel(radius:Int,aperture:Float,shape:Shape,cancel:Cancel):LegendaryMath.Kernel {
         cancel.check();require(radius>=0);FullFrameOptics.checkAperture(aperture)
         if(radius==0 || shape.radialRatio==1.0)return LegendaryMath.kernel(radius,aperture)

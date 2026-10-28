@@ -37,7 +37,9 @@ class HardwareSession(
     private val env:OrtEnvironment,private val path:String,private val label:String,
     private val cache:File,private val report:HardwareReport,
     private val forceCpu:Boolean=false,
-    private val preserveGeluPrimitives:Boolean=false
+    private val preserveGeluPrimitives:Boolean=false,
+    private val modelBytes:(()->ByteArray)?=null,
+    private val sessionFactory:((OrtEnvironment,OrtSession.SessionOptions)->OrtSession)?=null
 ):AutoCloseable {
     private var session:OrtSession?=null
     private var options:OrtSession.SessionOptions?=null
@@ -89,7 +91,13 @@ class HardwareSession(
             if(hardware)opts.addNnapi(EnumSet.of(NNAPIFlags.CPU_DISABLED,NNAPIFlags.USE_FP16))
             // CPU-only attribution is already known: avoid native per-node profiling overhead.
             if(hardware)opts.enableProfiling(File(cache,"hardware-${java.util.UUID.randomUUID()}").absolutePath)
-            val made=env.createSession(path,opts)
+            val made=if(sessionFactory!=null){
+                check(modelBytes==null){"Only one model source is allowed"}
+                sessionFactory.invoke(env,opts)
+            }else if(modelBytes==null)env.createSession(path,opts)else{
+                val bytes=modelBytes.invoke()
+                try{env.createSession(bytes,opts)}finally{bytes.fill(0)}
+            }
             session=made;options=opts;requestedHardware=hardware
             Log.i("LegendaryHardware","$label $w x $h: NNAPI hardware requested=$hardware; providerProfiling=$hardware")
         }catch(t:Throwable){

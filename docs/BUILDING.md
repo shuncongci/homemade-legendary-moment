@@ -25,7 +25,7 @@ Android Gradle Plugin 8.7.3、Kotlin 2.0.21、Gradle 8.9，版本在工程中固
 
 macOS/Linux 用 ./gradlew（首次执行 chmod +x gradlew）。标准测试入口 :app:testDebugUnitTest 也保留；verifyLeicaMath 直接用 JUnitCore 运行同一套断言，适合 Gradle 测试进程遇到路径问题的环境。
 
-公开 2.6.0（versionCode 61）已通过 1659 项 JVM 测试、Release Kotlin 和 AndroidTest Kotlin 编译、未签名 Release 构建；本机使用同版本官方 ONNX Runtime 1.28.0 AAR 的显式离线覆盖。构建前后公开源码摘要一致，原测试和合成夹具未改。公开版没有私有风格相关的 72 项测试，因此项数不与私有安装包的 1731 项混用。未安装或运行手机，没有实际操作用户照片；编译通过不代表真实模型齐全、通知/后台行为、相册识别、HDR 显示或 50MP 总内存已验收。 AndroidTest 只编译可执行 `:app:compileDebugAndroidTestKotlin`，不等于设备运行。
+公开 2.8（versionCode 78）已通过 2318 项 JVM 测试、Release Kotlin 和 AndroidTest Kotlin 编译、未签名 Release 构建；本机使用同版本官方 ONNX Runtime 1.28.0 AAR 的显式离线覆盖。构建前后公开源码摘要一致。公开版不包含私有风格相关的 72 项测试，不能与私有安装包的 2390 项混用。AndroidTest 仅编译，未安装或运行手机，未操作用户照片；不代表真实模型齐全或系统权限、相册、HDR 显示、动画和 50MP 总内存已经验收。 AndroidTest 编译入口为 `:app:compileDebugAndroidTestKotlin`。
 
 默认输出为 app/build/outputs/apk/debug/app-debug.apk。Debug 使用你电脑上的 Android 调试密钥签名，不使用我的发布签名。如果与已安装版本的签名不同，不能直接覆盖安装。卸载可能丢失应用数据，处理签名冲突前请先确认备份和数据保留方式。
 
@@ -82,4 +82,4 @@ HdrDevelopModeTest 新增 35 项：显式 HDR/SDR 路由、按钮权重、真实
 
 建议使用绝对路径；生成的 APK、日志和缓存不属于公开源码清单。.gitignore 已排除常规构建目录，但发布前仍应检查目录内容，不能仅依赖忽略规则保护凭据。
 
-2.6.0 新增的外接、EXIF/容器、扫描、监测与编辑呈现测试使用内存中的合成身份、回调、TIFF 字段及 16×12 纯色容器，不读取相册或私人样片；原片处置测试没有删除用户照片。当前登记共1659项，保留此前公开测试及夹具。公开构建仍从 Maven 获取依赖或显式使用官方本地 AAR，不依赖作者的保护或签名材料。
+2.6.0 新增的外接、EXIF/容器、扫描、监测与编辑呈现测试使用内存中的合成身份、回调、TIFF 字段及 16×12 纯色容器，不读取相册或私人样片；原片处置测试没有删除用户照片。当前登记共2318项，保留此前公开测试及夹具。公开构建仍从 Maven 获取依赖或显式使用官方本地 AAR，不依赖作者的保护或签名材料。

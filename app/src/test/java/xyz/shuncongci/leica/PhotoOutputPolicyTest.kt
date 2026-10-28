@@ -67,8 +67,8 @@ class PhotoOutputPolicyTest {
             try{LeicaSizes.colorSize(w,h);fail("invalid automatic size")}catch(_:IllegalArgumentException){}
         }
     }
-    @Test fun bokehStillUsesAllThreeSizesWithoutAnAutomatic50MpCap(){
-        assertEquals(16384 to 12288,LeicaSizes.processingSize(16384,12288,true,BokehOutput.ORIGINAL))
+    @Test fun bokehThreeSizesUseExplicit1250wOriginalCap(){
+        assertEquals(4082 to 3061,LeicaSizes.processingSize(16384,12288,true,BokehOutput.ORIGINAL))
         assertEquals(2048 to 1536,LeicaSizes.processingSize(16384,12288,true,BokehOutput.SIZE_2048))
         assertEquals(1024 to 768,LeicaSizes.processingSize(16384,12288,true,BokehOutput.SIZE_1024))
         for(o in BokehOutput.entries)assertEquals(360 to 480,LeicaSizes.processingSize(360,480,true,o))
