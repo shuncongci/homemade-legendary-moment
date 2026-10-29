@@ -92,6 +92,8 @@ class ExternalModeActivity:AppCompatActivity() {
         val header=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL}
         header.addView(button("返回"){leave()},LinearLayout.LayoutParams(dp(68),-2))
         header.addView(text("外接模式",22f).apply{setPadding(dp(14),0,0,0)},LinearLayout.LayoutParams(0,-2,1f));add(header,0)
+        start=button("开始监听（跳过现有全部照片）"){startListening()};add(start)
+        stop=button("停止监听并取消排队"){ExternalModeService.stop(this)};add(stop)
         add(text("拍一张，自动调色并保存 · 不支持虚化\n等“监听已就绪”后再拍照。已有照片和停止期间的照片不会处理。"))
         buildPermissions()
         heading("相机照片目录")
@@ -113,8 +115,6 @@ class ExternalModeActivity:AppCompatActivity() {
         monitor=button("",true){setSettings(settings.copy(monitor=!settings.monitor))};add(monitor)
         status=text("");add(status)
         progress=ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal).apply{isIndeterminate=true};add(progress)
-        start=button("开始监听（跳过现有全部照片）"){startListening()};add(start)
-        stop=button("停止监听并取消排队"){ExternalModeService.stop(this)};add(stop)
         add(button("打开系统相机"){
             if(!ExternalModeRuntime.status.ready){message("尚未就绪","请先开始监听，并等待页面显示“监听已就绪”，再去拍照。")}
             else try{startActivity(Intent(android.provider.MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA))}catch(_:android.content.ActivityNotFoundException){message("请手动打开相机","本机没有可直接跳转的相机入口，可切换到你的相机应用。")}

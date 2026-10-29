@@ -401,9 +401,9 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
         val t0=SystemClock.elapsedRealtime();hardwareReport.reset();cacheDir.mkdirs()
         var resultFile=File(cacheDir,"result-${java.util.UUID.randomUUID()}.png")
         var durableResult=false
-        val renderKey=hdrMode.renderKey(listOf("270-"+FourTileBokeh.NATURAL_ID+"-"+BokehRenderPolicy.ID+"-"+FullFrameOptics.ID+"-positive-v2",uri,recovery?.store?.blobName("source"),style.id,style.sha256,blurEnabled,point,aperture,outputSize,colorEnabled,renderSize,subjectEnabled,subjectPoints,subjectResolution.longEdge).joinToString("|"))
-        recovery?.beginRender(renderKey)
         val sourceHdr=if(hdrOutput!=null || hdrRowsOutput!=null)true else hdrMode.wantsHdr{HdrAutoSource.detect(context,uri)}
+        val renderKey=HdrOutputBrightness.renderKey(hdrMode.renderKey(listOf("270-"+FourTileBokeh.NATURAL_ID+"-"+BokehRenderPolicy.ID+"-"+FullFrameOptics.ID+"-positive-v2",uri,recovery?.store?.blobName("source"),style.id,style.sha256,blurEnabled,point,aperture,outputSize,colorEnabled,renderSize,subjectEnabled,subjectPoints,subjectResolution.longEdge).joinToString("|")),sourceHdr)
+        recovery?.beginRender(renderKey)
         var streamedHdr:FileHdrPixels?=null;var ownedHdrFile:File?=null
         var hdrReady=false;var hdrFallback=""
         try {
@@ -524,7 +524,9 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
             }
             if(streamedHdr!=null){
               try {
-                val pixels=checkNotNull(streamedHdr)
+                // Raw render.hdr stays unexposed; finish once here, including resumed renders.
+                // Finished pairs/JPEGs are cropped and published without another gain.
+                val pixels=HdrOutputBrightness.apply(checkNotNull(streamedHdr))
                 cancel.check()
                 if(hdrRowsOutput!=null)hdrRowsOutput(output,pixels)
                 else if(hdrOutput!=null){
