@@ -1,6 +1,6 @@
 # 实现说明
 
-这份说明介绍我发布的 2.8 源码中的处理链路、工作尺寸和已知限制，供阅读或修改代码时参考。
+这份说明介绍我发布的 2.8.1 源码中的处理链路、工作尺寸和已知限制，供阅读或修改代码时参考。
 
 主要代码在 app/src/main/java/xyz/shuncongci/leica。界面入口是 LeicaActivity.kt；LeicaEngine.kt 负责模型会话和处理链路。PhotoFlow.kt、PhotoWorkflow.kt 管理当前照片、处理方式和请求状态，界面操作不应直接绕过这些状态。
 
@@ -66,7 +66,7 @@ PureLut.kt 提供无 Android 依赖的通用三线性查表：PLUT0001、big-end
 
 verifyLeicaMath 运行不依赖 Android 设备的 JUnit 测试。我随源码提供的 leica 测试数据由程序生成，沿用旧文件名仅为兼容测试引用；其中 expected 图不是神经网络推理结果。其余历史数值夹具原样保留。
 
-公开 2.8（versionCode 78）已通过 2318 项 JVM 测试、Release Kotlin 和 AndroidTest Kotlin 编译、未签名 Release 构建；本机使用同版本官方 ONNX Runtime 1.28.0 AAR 的显式离线覆盖。构建前后公开源码摘要一致。公开版不包含私有风格相关的 72 项测试，不能与私有安装包的 2390 项混用。AndroidTest 仅编译，未安装或运行手机，未操作用户照片；不代表真实模型齐全或系统权限、相册、HDR 显示、动画和 50MP 总内存已经验收。
+公开 2.8.1（versionCode 79）通过 2325 项 JVM 测试、Release Kotlin 和 AndroidTest Kotlin 编译及未签名 Release 构建。AndroidTest 仅编译，未运行手机；构建使用官方 ONNX Runtime 1.28.0 AAR 显式离线覆盖。公开版仍不含私有风格的 72 项测试，不与私有包的 2397 项混用。未操作用户照片；合成测试不代表报错原片或全机型已验收。
 
 ## 2.6.0 外接、元数据与呈现
 
@@ -83,3 +83,7 @@ EditorPresentation / EditorLayout 用真实视图滑动与裁剪维护布局；D
 ExternalDeletionConsent 将删除授权版本与元数据完整性分开：旧授权回到保留原片，重新同意后以 verified 回读结果进入后续删除检查，而不是伪造 complete。ExternalMetadataTransfer 仍如实记录完整性，原片与成片指纹、发布、取消、系统授权及停止/重启保护保留。
 
 同步 2.6.0 之后的仅新增输入稳定性、PNG 同步、JPEG/EXIF/XMP 与源增益归档兼容修复；相册选择器权限分流、忙碌选图保留、完整组/区域检查点、远焦 d² 映射和逐点主体约束，以及调色到虚化的连续呈现。检查点不是任意指令续算；性能取决于输入和设备，不承诺每场景更快。
+
+## 2.8.1 手动编辑保存修复
+
+手动编辑保存时，越界或截断的 Interop 目录不再阻断保存：保留边界检查，只跳过该目录的成片链接并提示用户。原图不改不删，原始元数据字节仍保存在经过回读核验的归档中；归档不保证其他相册可读取。其他目录、冲突、未知类型和真实 I/O、权限、取消仍严格处理。外接和删除策略不变，不改照片像素、调色、虚化、尺寸、精度或 HDR。

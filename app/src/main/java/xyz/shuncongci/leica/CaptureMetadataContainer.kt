@@ -175,10 +175,11 @@ object CaptureMetadataContainer {
         extra.webp.forEach{(k,p)->webpChunk(out,k,p)}
     }
     fun write(source:File,target:File,exif:ByteArray,width:Int,height:Int,cancel:Cancel)=writeExtra(source,target,exif,width,height,cancel,Extra())
-    internal fun writePreserved(encoded:File,target:File,original:PreservedMetadata.Bundle,width:Int,height:Int,badge:Boolean,cancel:Cancel,outputSrgb:Boolean=true){
+    @JvmOverloads
+    internal fun writePreserved(encoded:File,target:File,original:PreservedMetadata.Bundle,width:Int,height:Int,badge:Boolean,cancel:Cancel,outputSrgb:Boolean=true,onInvalidInterop:(()->Unit)?=null){
         cancel.check();val dest=PreservedMetadata.read(encoded,cancel)
         val srcExif=original.exif?.let(::CaptureExif)?:CaptureExif.empty()
-        val exif=srcExif.normalized(width,height,XiaomiLeicaBadge.patches(srcExif,badge),outputSrgb)
+        val exif=srcExif.normalized(width,height,XiaomiLeicaBadge.patches(srcExif,badge),outputSrgb,onInvalidInterop)
         val archive=PreservedMetadata.archive(original)
         val xml=PreservedMetadata.mergedXmp(original.xmp,dest.xmp,width,height,outputSrgb)
         val jpeg=ArrayList<Pair<Int,ByteArray>>();val png=ArrayList<Pair<String,ByteArray>>();val webp=ArrayList<Pair<String,ByteArray>>()

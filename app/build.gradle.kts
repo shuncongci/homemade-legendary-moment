@@ -9,8 +9,8 @@ android {
         applicationId = "xyz.shuncongci.leica"
         minSdk = 26
         targetSdk = 35
-        versionCode = 78
-        versionName = "2.8"
+        versionCode = 79
+        versionName = "2.8.1"
         testInstrumentationRunner = "xyz.shuncongci.leica.HairDiagnosticInstrumentation"
     }
     buildTypes {

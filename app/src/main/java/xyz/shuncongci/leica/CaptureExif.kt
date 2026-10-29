@@ -19,7 +19,8 @@ class CaptureExif(val bytes:ByteArray) {
         buffer=ByteBuffer.wrap(bytes).order(order)
         require(u16(2)==42){"不支持此EXIF/TIFF版本；未丢弃元数据继续保存"}
     }
-    private fun bounds(offset:Long,length:Long):Int {require(offset>=0 && length>=0 && offset<=bytes.size.toLong()-length){"EXIF引用越界"};return offset.toInt()}
+    internal class ReferenceBoundsException:IllegalArgumentException("EXIF引用越界")
+    private fun bounds(offset:Long,length:Long):Int {if(!(offset>=0 && length>=0 && offset<=bytes.size.toLong()-length))throw ReferenceBoundsException();return offset.toInt()}
     private fun u16(offset:Int)=buffer.getShort(bounds(offset.toLong(),2)).toInt() and 65535
     private fun u32(offset:Int)=buffer.getInt(bounds(offset.toLong(),4)).toLong() and 0xffffffffL
     fun entries(offset:Long):List<Entry> = directoryEntries(offset,true)
@@ -45,7 +46,8 @@ class CaptureExif(val bytes:ByteArray) {
     fun exif()=directoryEntries(pointer(root(),0x8769),false)
     fun gps()=directoryEntries(pointer(root(),0x8825),false)
     fun value(exifIfd:Boolean,tag:Int)=(if(exifIfd)exif()else root()).firstOrNull{it.tag==tag}?.value
-    fun normalized(width:Int,height:Int,patches:List<Patch> = emptyList(),outputSrgb:Boolean=true):ByteArray {
+    @JvmOverloads
+    fun normalized(width:Int,height:Int,patches:List<Patch> = emptyList(),outputSrgb:Boolean=true,onInvalidInterop:(()->Unit)?=null):ByteArray {
         require(width>0 && height>0)
         val root=root().associateBy{it.tag}.toMutableMap()
         val exif=exif().associateBy{it.tag}.toMutableMap()
@@ -76,9 +78,17 @@ class CaptureExif(val bytes:ByteArray) {
         val directories=listOf(u32(4),pointer(root.values.toList(),0x8769),pointer(root.values.toList(),0x8825),interopPointer).filter{it!=0L}
         require(directories.distinct().size==directories.size){"EXIF目录循环/别名冲突，未丢弃元数据继续处理"}
         if(interopPointer!=0L){
-            val interop=directoryEntries(interopPointer,false).associateBy{it.tag}.toMutableMap()
-            if(outputSrgb)interop[1]=changed(1,2,byteArrayOf(82,57,56,0)) else interop.remove(1) // destination ICC remains authoritative
-            exif[0xa005]=long(0xa005,directory(interop.values))
+            // Only manual editing opts in. Keep all bounds checks and all unrelated failures strict.
+            // Original bytes remain at their original offsets and in the verified raw archive.
+            val parsedInterop=try{directoryEntries(interopPointer,false)}catch(t:ReferenceBoundsException){
+                if(onInvalidInterop==null)throw t
+                onInvalidInterop();null
+            }
+            if(parsedInterop==null)exif.remove(0xa005) else {
+                val interop=parsedInterop.associateBy{it.tag}.toMutableMap()
+                if(outputSrgb)interop[1]=changed(1,2,byteArrayOf(82,57,56,0)) else interop.remove(1) // destination ICC remains authoritative
+                exif[0xa005]=long(0xa005,directory(interop.values))
+            }
         }
         patches.forEach{p->(if(p.exifIfd)exif else root)[p.tag]=changed(p.tag,p.type,p.value)}
         root[0x8769]=long(0x8769,directory(exif.values))

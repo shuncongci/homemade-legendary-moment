@@ -85,5 +85,46 @@ class ExifDirectoryCompatibilityTest {
     @Test fun hdrExportPreservesIndependentMetadata(){val encoded=ByteArrayOutputStream().also{UltraHdrContainer.write(it,CaptureMetadataFixtures.jpeg,CaptureMetadataFixtures.jpeg,HdrMath.Map(16,12,IntArray(192),1f,4f,4f))}.toByteArray();export(encoded)}
     @Test fun cancellationDoesNotPublish(){work{d->val encoded=File(d,"plain").apply{writeBytes(CaptureMetadataFixtures.png)};val original=File(d,"source").apply{writeBytes(source(independent("interop")))};val bundle=PreservedMetadata.read(original,Cancel());val out=File(d,"out");assertThrows(CancellationException::class.java){CaptureMetadataContainer.writePreserved(encoded,out,bundle,16,12,false,Cancel().also{it.cancelled=true})};assertFalse(out.exists())}}
     @Test fun realIoFailureIsNotSwallowed(){work{d->val original=File(d,"source").apply{writeBytes(source(independent("interop")))};val bundle=PreservedMetadata.read(original,Cancel());val out=File(d,"out");assertThrows(FileNotFoundException::class.java){CaptureMetadataContainer.writePreserved(File(d,"missing"),out,bundle,16,12,false,Cancel())};assertFalse(out.exists())}}
+    @Test fun manualInteropOutOfRangeIsDetachedWithoutChangingOriginal(){
+        for(o in listOf(be,le))for(pointer in listOf(-1,1024)){
+            val b=withMakerNote(o);ByteBuffer.wrap(b).order(o).putInt(174,pointer)
+            val copy=b.copyOf();var warnings=0
+            val p=CaptureExif(CaptureExif(b).normalized(16,12,onInvalidInterop={warnings++}))
+            assertEquals(1,warnings);assertFalse(p.exif().any{it.tag==0xa005})
+            assertArrayEquals(copy,b);assertArrayEquals(copy.copyOfRange(8,copy.size),p.bytes.copyOfRange(8,copy.size))
+            assertArrayEquals(CaptureExif(b).value(true,0x927c),p.value(true,0x927c))
+        }
+    }
+    @Test fun manualTruncatedInteropIsDetached(){
+        for(o in listOf(be,le)){val b=withMakerNote(o).dropLast(1).toByteArray();var warnings=0
+            val p=CaptureExif(CaptureExif(b).normalized(16,12,onInvalidInterop={warnings++}))
+            assertEquals(1,warnings);assertFalse(p.exif().any{it.tag==0xa005})
+        }
+    }
+    @Test fun manualValidInteropIsNotSkipped(){var warnings=0;val p=CaptureExif(CaptureExif(withMakerNote(be)).normalized(16,12,onInvalidInterop={warnings++}));assertEquals(0,warnings);assertTrue(p.exif().any{it.tag==0xa005})}
+    @Test fun manualDoesNotIgnoreRootOrExifOrGpsBounds(){
+        for(k in listOf(Kind.EXIF,Kind.GPS)){val b=tight(k);ByteBuffer.wrap(b).putInt(18,-1)
+            assertThrows(IllegalArgumentException::class.java){CaptureExif(b).normalized(16,12,onInvalidInterop={fail("Not Interop")})}
+        }
+    }
+    @Test fun manualDoesNotIgnoreInteropTypeOrCycle(){
+        val type=tight(Kind.INTEROP);ByteBuffer.wrap(type).putShort(44,18)
+        assertThrows(IllegalStateException::class.java){CaptureExif(type).normalized(16,12,onInvalidInterop={fail("Not bounds")})}
+        val cycle=tight(Kind.INTEROP);ByteBuffer.wrap(cycle).putInt(36,26)
+        assertThrows(IllegalArgumentException::class.java){CaptureExif(cycle).normalized(16,12,onInvalidInterop={fail("Cycle")})}
+    }
+    @Test fun manualFiveFormatsKeepRawArchiveAndEncodedBytes(){work{d->
+        val b=withMakerNote(be);ByteBuffer.wrap(b).putInt(174,-1);val raw=source(b)
+        val original=File(d,"source").apply{writeBytes(raw)};val bundle=PreservedMetadata.read(original,Cancel())
+        val hdr=ByteArrayOutputStream().also{UltraHdrContainer.write(it,CaptureMetadataFixtures.jpeg,CaptureMetadataFixtures.jpeg,HdrMath.Map(16,12,IntArray(192),1f,4f,4f))}.toByteArray()
+        listOf(CaptureMetadataFixtures.jpeg,CaptureMetadataFixtures.png,CaptureMetadataFixtures.webp,CaptureMetadataFixtures.losslessWebp,hdr).forEachIndexed{i,bytes->
+            val plain=File(d,"plain$i").apply{writeBytes(bytes)};val out=File(d,"out$i");var warnings=0
+            CaptureMetadataContainer.writePreserved(plain,out,bundle,16,12,false,Cancel(),onInvalidInterop={warnings++})
+            assertEquals(1,warnings);assertArrayEquals(raw,original.readBytes());assertArrayEquals(bytes,plain.readBytes())
+            assertArrayEquals(PreservedMetadata.archive(bundle),PreservedMetadata.readArchive(out,Cancel()))
+            val p=CaptureExif(CaptureMetadataContainer.readExif(out).exif!!);assertFalse(p.exif().any{it.tag==0xa005})
+        }
+    }}
+    @Test fun strictExternalStillRejectsInvalidInterop(){val b=withMakerNote(be);ByteBuffer.wrap(b).putInt(174,-1);reject(b)}
     @Test fun damagedSubdirectoryDoesNotPublish(){work{d->val b=tight(Kind.INTEROP).dropLast(1).toByteArray();val original=File(d,"source").apply{writeBytes(source(b))};val bundle=PreservedMetadata.read(original,Cancel());val plain=File(d,"plain").apply{writeBytes(CaptureMetadataFixtures.png)};val out=File(d,"out");assertThrows(IllegalArgumentException::class.java){CaptureMetadataContainer.writePreserved(plain,out,bundle,16,12,false,Cancel())};assertFalse(out.exists());assertArrayEquals(source(b),original.readBytes())}}
 }
