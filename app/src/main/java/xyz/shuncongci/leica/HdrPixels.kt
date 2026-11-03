@@ -12,6 +12,8 @@ import xyz.shuncongci.leica.LegendaryMath.Frame
 interface HdrPixels {
     val w:Int
     val h:Int
+    /** Frozen display ratio for a finished joint-enhanced output; null means legacy auto budget. */
+    val displayCapacity:Float? get()=null
     fun read(channel:Int,y:Int,rows:Int,values:FloatArray,cancel:Cancel)
     companion object {
         fun of(frame:Frame):HdrPixels {
@@ -33,11 +35,13 @@ interface HdrPixels {
 }
 
 /** Positional, bounded 64 KiB I/O, not a full-size mapping or a full-size FloatArray. */
-internal class FileHdrPixels(val file:File,override val w:Int,override val h:Int,internal val offset:Long):HdrPixels,Closeable {
+internal class FileHdrPixels(val file:File,override val w:Int,override val h:Int,internal val offset:Long,
+                             override val displayCapacity:Float?=null):HdrPixels,Closeable {
     private val channel:FileChannel
     private val bytes=ByteBuffer.allocate(65536).order(ByteOrder.BIG_ENDIAN)
     init {
         HdrPixels.dimensions(w,h)
+        displayCapacity?.let{HdrOutputColor.checkedCapacity(it)}
         require(offset>=0 && file.length()==offset+12L*w*h){"HDR浮点缓存长度不正确"}
         channel=RandomAccessFile(file,"r").channel
     }
@@ -92,6 +96,7 @@ internal object HdrFloatFile {
         }catch(t:Throwable){file.delete();throw t}
     }
     fun write(file:File,pixels:HdrPixels,cancel:Cancel){
+        require(pixels.displayCapacity==null){"已完成HDR须使用成片pair保存显示容量，不能写为原始检查点"}
         write(file,pixels.w,pixels.h,cancel){emit->
             val row=FloatArray(pixels.w*3);val plane=FloatArray(pixels.w)
             for(y in 0 until pixels.h){
@@ -123,6 +128,7 @@ internal object HdrPixelGeometry {
         if(box.left==0 && box.top==0 && box.w==input.w && box.h==input.h && w==input.w && h==input.h)return input
         return object:HdrPixels {
             override val w=w;override val h=h
+            override val displayCapacity=input.displayCapacity
             private val source=FloatArray(input.w);private val sums=DoubleArray(w)
             private val sx=box.w.toDouble()/w;private val sy=box.h.toDouble()/h
             override fun read(channel:Int,y:Int,rows:Int,values:FloatArray,cancel:Cancel){

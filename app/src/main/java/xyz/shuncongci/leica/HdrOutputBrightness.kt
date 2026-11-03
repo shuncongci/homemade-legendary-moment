@@ -9,7 +9,7 @@ internal object HdrOutputBrightness {
     fun renderKey(base:String,hdr:Boolean)=if(hdr)"$base|$ID"else base
     fun apply(input:HdrPixels):HdrPixels {
         HdrPixels.dimensions(input.w,input.h)
-        return if(input is Brightened)input else Brightened(input)
+        return if(input is Brightened || input.displayCapacity!=null)input else Brightened(input)
     }
     private class Brightened(private val source:HdrPixels):HdrPixels {
         override val w=source.w

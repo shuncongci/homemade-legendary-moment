@@ -44,7 +44,25 @@ object HdrPairExport {
         encode(target,sdr,HdrPixels.of(hdr),cancel)
     /** Compressed streams stay in private temporary files; decoded base is read in <=16-row strips.
      * Base JPEG quality 95, gain JPEG quality 100, dimensions and exact log-ratio math are unchanged. */
-    internal fun encode(target:File,sdr:Planes,hdr:HdrPixels,cancel:Cancel):HdrExportPolicy.Metadata {
+    /** Synchronous borrowed rows for composition/diagnostics, using the same Q95 JPEG reference.
+     * Consumers must finish reading/persisting before returning; decoded Bitmap is then released. */
+    internal fun finished(sdr:Planes,exposed:HdrPixels,directory:File,cancel:Cancel,use:(HdrPixels)->Unit){
+        val base=File.createTempFile("hdr-finish-base-",".jpg",directory)
+        try {
+            jpeg(sdr,95,base,cancel)
+            val decoded=checkNotNull(BitmapFactory.decodeFile(base.path,BitmapFactory.Options().apply{inPreferredConfig=Bitmap.Config.ARGB_8888;inSampleSize=1}))
+            try{
+                check(decoded.width==sdr.width && decoded.height==sdr.height)
+                use(HdrOutputColor.apply(exposed,cancel){y,rows,pixels->decoded.getPixels(pixels,0,sdr.width,0,y,sdr.width,rows)})
+                cancel.check()
+            }finally{decoded.recycle()}
+        }finally{base.delete()}
+    }
+    internal fun finish(target:File,pair:File,sdr:Planes,exposed:HdrPixels,cancel:Cancel):HdrExportPolicy.Metadata =
+        encodePrepared(target,sdr,exposed,cancel,pair)
+    internal fun encode(target:File,sdr:Planes,hdr:HdrPixels,cancel:Cancel):HdrExportPolicy.Metadata =
+        encodePrepared(target,sdr,hdr,cancel,null)
+    private fun encodePrepared(target:File,sdr:Planes,hdr:HdrPixels,cancel:Cancel,finishPair:File?):HdrExportPolicy.Metadata {
         cancel.check();require(hdr.w==sdr.width && hdr.h==sdr.height)
         val directory=checkNotNull(target.parentFile);val temporary=ArrayList<File>()
         fun temp(prefix:String)=File.createTempFile(prefix,".tmp",directory).also{temporary.add(it)}
@@ -54,15 +72,23 @@ object HdrPairExport {
             val decoded=checkNotNull(BitmapFactory.decodeFile(base.path,BitmapFactory.Options().apply{inPreferredConfig=Bitmap.Config.ARGB_8888;inSampleSize=1}))
             val map=try{
                 check(decoded.width==sdr.width && decoded.height==sdr.height)
-                val gm=Bitmap.createBitmap(sdr.width,sdr.height,Bitmap.Config.ARGB_8888)
-                try {
-                    gm.setHasAlpha(false)
-                    val made=HdrMath.encodePixelRows(hdr,cancel,
-                        readBase={y,rows,pixels->decoded.getPixels(pixels,0,sdr.width,0,y,sdr.width,rows)},
-                        write={y,rows,pixels->gm.setPixels(pixels,0,sdr.width,0,y,sdr.width,rows)})
-                    cancel.check();gain.outputStream().buffered(65536).use{check(gm.compress(Bitmap.CompressFormat.JPEG,100,it))}
-                    made
-                }finally{gm.recycle()}
+                val readBase:(Int,Int,IntArray)->Unit={y,rows,pixels->decoded.getPixels(pixels,0,sdr.width,0,y,sdr.width,rows)}
+                val finished=if(finishPair!=null)HdrOutputColor.apply(hdr,cancel,readBase)else hdr
+                fun encodeGain(rows:HdrPixels):HdrMath.Map {
+                    val gm=Bitmap.createBitmap(sdr.width,sdr.height,Bitmap.Config.ARGB_8888)
+                    try {
+                        gm.setHasAlpha(false)
+                        val made=HdrMath.encodePixelRows(rows,cancel,
+                            readBase=readBase,
+                            write={y,count,pixels->gm.setPixels(pixels,0,sdr.width,0,y,sdr.width,count)})
+                        cancel.check();gain.outputStream().buffered(65536).use{check(gm.compress(Bitmap.CompressFormat.JPEG,100,it))}
+                        return made
+                    }finally{gm.recycle()}
+                }
+                // Persist each enhanced strip once, then encode from exactly those immutable Float32 bits.
+                // The final Q95-decoded Bitmap/reference and frozen capacity remain the same.
+                if(finishPair!=null)HdrResultStore.withWrittenRows(finishPair,sdr,finished,cancel,::encodeGain)
+                else encodeGain(finished)
             }finally{decoded.recycle()}
             cancel.check();FileOutputStream(part).use{raw->
                 val out=BufferedOutputStream(raw,65536);UltraHdrContainer.write(out,base,gain,map,cancel);out.flush();raw.fd.sync()
@@ -99,6 +125,9 @@ object HdrPairExport {
         check(file.isFile && file.length()>0){"HDR成片缓存缺失，请重新生成"};cancel.check()
         if(metadataSource!=null){val complete=EditorExportMetadata.preserve(context,file,metadataSource,checkNotNull(metadataSize),badge!=null,cancel);try{return publish(context,complete,cancel)}finally{complete.delete()}}
         if(badge!=null){val marked=LeicaBadgeExport.marked(context,file,badge.first,badge.second,cancel);try{return publish(context,marked,cancel)}finally{marked.delete()}}
+        return HdrJpegCompatibility.withCompatible(file,context.cacheDir,cancel){ready->publishCompatible(context,ready,cancel)}
+    }
+    private fun publishCompatible(context:Context,file:File,cancel:Cancel):String {
         val bytes=file.length();val name="传奇一瞬-HDR-${System.currentTimeMillis()}-${UUID.randomUUID().toString().take(8)}.jpg"
         val cr=context.contentResolver
         val values=ContentValues().apply{put(MediaStore.Images.Media.DISPLAY_NAME,name);put(MediaStore.Images.Media.MIME_TYPE,"image/jpeg");put(MediaStore.Images.Media.RELATIVE_PATH,"Pictures/传奇一瞬");put(MediaStore.Images.Media.IS_PENDING,1)}

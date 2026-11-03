@@ -22,7 +22,7 @@ object ExternalModePolicy {
     fun hash(value:String)=MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8)).joinToString(""){"%02x".format(it)}
     fun image(name:String):Boolean {
         if(name.startsWith('.') || name.startsWith(OUTPUT_PREFIX) || name.endsWith(".part",true))return false
-        return name.substringAfterLast('.',"").lowercase(java.util.Locale.ROOT) in setOf("jpg","jpeg","png","webp","heic","heif","dng")
+        return name.substringAfterLast('.',"").lowercase(java.util.Locale.ROOT) in setOf("jpg","jpeg","png","webp","heic","heif","avif","tif","tiff","dng","gif","bmp")
     }
     fun cameraScore(path:String):Int {
         val p=path.replace('\\','/').trim('/').lowercase(java.util.Locale.ROOT)

@@ -69,9 +69,9 @@ object CaptureMetadataContainer {
         when{
             first.starts(byteArrayOf(-1,-40))->{
                 val headers=jpegHeaders(f);val packets=headers.filter{it.exif}.map{it.payload.copyOfRange(6,it.payload.size)}
-                // Some camera JPEGs have a second tiny ExifVersion-only packet. Keep the rich packet;
-                // nontrivial additional packets are disclosed and prevent source auto-deletion.
-                val selected=packets.maxByOrNull{it.size}
+                // Select by actual fields, not packet size; all original packets remain archived.
+                // Distinct descriptive TIFFs cannot be merged safely across MakerNote offset spaces.
+                val selected=ExifPacketSelection.select(packets)
                 val extraExif=packets.any{it!==selected && it.size>128}
                 val extra=headers.any{(it.marker==0xeb && it.payload.starts(PreservedMetadata.ARCHIVE)) || it.marker==0xed || it.marker==0xfe || (it.marker==0xe1 && !it.exif && it.payload.toString(Charsets.UTF_8).let{s->!s.contains("hdrgm:") || s.contains("dc:") || s.contains("photoshop:")})}
                 Read(selected,true,extraExif || extra)
@@ -90,7 +90,7 @@ object CaptureMetadataContainer {
                 val packet=exifs.firstOrNull()?.let{read(f,it.offset+8,it.size.toInt())}
                 Read(packet?.let{if(it.starts(EXIF))it.copyOfRange(6,it.size)else it},true,chunks.any{it.kind in setOf("XMP ","LMET")})
             }
-            else->Read(null,false)
+            else->SourceFormatMetadata.read(file,Cancel())?.let{Read(it.exif,true,true)}?:Read(null,false)
         }
     }
     private fun copy(f:RandomAccessFile,out:OutputStream,from:Long,length:Long,cancel:Cancel){

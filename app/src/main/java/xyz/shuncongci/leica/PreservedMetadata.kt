@@ -54,7 +54,12 @@ internal object PreservedMetadata {
                     require(crc.value==(ByteBuffer.wrap(bytes(f,c.offset+8+c.size,4)).int.toLong() and 0xffffffffL)){"PNG元数据CRC错误"};add("P:${c.kind}",b)
                 }}}
                 head.size>=12 && String(head,0,4)=="RIFF" && String(head,8,4)=="WEBP"->{format="WEBP";for(c in CaptureMetadataContainer.chunks(f,false)){cancel.check();if(c.kind !in setOf("VP8X","VP8 ","VP8L","ALPH","ANIM","ANMF"))add("W:${c.kind}",bytes(f,c.offset+8,c.size))}}
-                else->error("此来源格式暂不能完整保留元数据；未导出。请选原始JPEG、PNG或WebP，原片不变。")
+                else->{
+                    val extra=SourceFormatMetadata.read(file,cancel)
+                        ?:error("此来源格式暂不支持元数据迁移；支持JPEG、PNG、WebP、HEIC/HEIF、AVIF、经典TIFF/DNG、GIF和BMP，像素解码仍取决于系统。原片不变。")
+                    require(extra.packets.sumOf{it.bytes.size.toLong()}<=limit){"原图元数据超过安全上限"}
+                    return extra
+                }
             }
         }
         val xmp=ArrayList<ByteArray>()

@@ -6,7 +6,7 @@ import java.io.OutputStream
 import java.io.File
 import java.io.RandomAccessFile
 
-/** Adobe gainmap JPEG + MPF. Both JPEG byte streams are already encoded; base is never recompressed after map derivation. */
+/** Adobe + ISO 21496-1 gainmap JPEG + MPF. Already-encoded JPEG streams are never recompressed. */
 object UltraHdrContainer {
     private fun segment(marker:Int,payload:ByteArray):ByteArray {
         require(payload.size+2<=65535)
@@ -29,12 +29,15 @@ object UltraHdrContainer {
     private fun headers(baseLength:Int,gainLength:Int,map:HdrMath.Map):Pair<ByteArray,ByteArray> {
         fun log2(v:Float)=kotlin.math.ln(v.toDouble())/kotlin.math.ln(2.0)
         val fields="xmlns:hdrgm=\"http://ns.adobe.com/hdr-gain-map/1.0/\" hdrgm:Version=\"1.0\" hdrgm:GainMapMin=\"${log2(map.minimum)}\" hdrgm:GainMapMax=\"${log2(map.maximum)}\" hdrgm:Gamma=\"1\" hdrgm:OffsetSDR=\"${HdrMath.EPSILON}\" hdrgm:OffsetHDR=\"${HdrMath.EPSILON}\" hdrgm:HDRCapacityMin=\"0\" hdrgm:HDRCapacityMax=\"${log2(map.display)}\" hdrgm:BaseRenditionIsHDR=\"False\""
-        val gainXmp=xmp(fields);val gainSize=Math.addExact(gainLength,gainXmp.size)
+        val primaryIso=segment(0xe2,HdrIsoMetadata.primary())
+        val gainMetadata=xmp(fields)+segment(0xe2,HdrIsoMetadata.gain(map))
+        val gainSize=Math.addExact(gainLength,gainMetadata.size)
         val primaryXmp=xmp("xmlns:hdrgm=\"http://ns.adobe.com/hdr-gain-map/1.0/\" hdrgm:Version=\"1.0\" xmlns:Container=\"http://ns.google.com/photos/1.0/container/\" xmlns:Item=\"http://ns.google.com/photos/1.0/container/item/\"",
             "<Container:Directory><rdf:Seq><rdf:li rdf:parseType=\"Resource\"><Container:Item Item:Semantic=\"Primary\" Item:Mime=\"image/jpeg\"/></rdf:li><rdf:li rdf:parseType=\"Resource\"><Container:Item Item:Semantic=\"GainMap\" Item:Mime=\"image/jpeg\" Item:Length=\"$gainSize\"/></rdf:li></rdf:Seq></Container:Directory>")
-        val primarySize=Math.addExact(baseLength,primaryXmp.size+mpf(0,0,0).size)
-        val index=mpf(primarySize,gainSize,primarySize-(2+primaryXmp.size+8))
-        return (primaryXmp+index) to gainXmp
+        val beforeIndex=primaryXmp+primaryIso
+        val primarySize=Math.addExact(baseLength,beforeIndex.size+mpf(0,0,0).size)
+        val index=mpf(primarySize,gainSize,primarySize-(2+beforeIndex.size+8))
+        return (beforeIndex+index) to gainMetadata
     }
     fun write(out:OutputStream,base:ByteArray,gain:ByteArray,map:HdrMath.Map) {
         for(bytes in listOf(base,gain))require(bytes.size>=4 && bytes[0]==(-1).toByte() && bytes[1]==(-40).toByte() && bytes[bytes.size-2]==(-1).toByte() && bytes.last()==(-39).toByte()){"无效JPEG数据"}

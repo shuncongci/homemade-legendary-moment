@@ -402,7 +402,7 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
         var resultFile=File(cacheDir,"result-${java.util.UUID.randomUUID()}.png")
         var durableResult=false
         val sourceHdr=if(hdrOutput!=null || hdrRowsOutput!=null)true else hdrMode.wantsHdr{HdrAutoSource.detect(context,uri)}
-        val renderKey=HdrOutputBrightness.renderKey(hdrMode.renderKey(listOf("270-"+FourTileBokeh.NATURAL_ID+"-"+BokehRenderPolicy.ID+"-"+FullFrameOptics.ID+"-positive-v2",uri,recovery?.store?.blobName("source"),style.id,style.sha256,blurEnabled,point,aperture,outputSize,colorEnabled,renderSize,subjectEnabled,subjectPoints,subjectResolution.longEdge).joinToString("|")),sourceHdr)
+        val renderKey=HdrOutputColor.renderKey(HdrOutputBrightness.renderKey(hdrMode.renderKey(listOf("270-"+FourTileBokeh.NATURAL_ID+"-"+BokehRenderPolicy.ID+"-"+FullFrameOptics.ID+"-positive-v2",uri,recovery?.store?.blobName("source"),style.id,style.sha256,blurEnabled,point,aperture,outputSize,colorEnabled,renderSize,subjectEnabled,subjectPoints,subjectResolution.longEdge).joinToString("|")),sourceHdr),sourceHdr)
         recovery?.beginRender(renderKey)
         var streamedHdr:FileHdrPixels?=null;var ownedHdrFile:File?=null
         var hdrReady=false;var hdrFallback=""
@@ -524,21 +524,19 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
             }
             if(streamedHdr!=null){
               try {
-                // Raw render.hdr stays unexposed; finish once here, including resumed renders.
-                // Finished pairs/JPEGs are cropped and published without another gain.
+                // Raw render.hdr stays unexposed. Finish once here, including resumed raw renders.
+                // Stored result pairs/JPEGs are final and are cropped/published without another gain.
                 val pixels=HdrOutputBrightness.apply(checkNotNull(streamedHdr))
                 cancel.check()
-                if(hdrRowsOutput!=null)hdrRowsOutput(output,pixels)
-                else if(hdrOutput!=null){
+                if(hdrRowsOutput!=null)HdrPairExport.finished(output,pixels,cacheDir,cancel){finished->hdrRowsOutput(output,finished)}
+                else if(hdrOutput!=null)HdrPairExport.finished(output,pixels,cacheDir,cancel){finished->
                     // Explicit legacy diagnostic receiver requires a Frame; normal UI/export never uses this allocation.
                     val frame=LegendaryMath.Frame(w,h,3,FloatArray(w*h*3));val row=FloatArray(w)
-                    for(c in 0..2)for(y in 0 until h){pixels.read(c,y,1,row,cancel);row.copyInto(frame.data,c*w*h+y*w)}
+                    for(c in 0..2)for(y in 0 until h){finished.read(c,y,1,row,cancel);row.copyInto(frame.data,c*w*h+y*w)}
                     hdrOutput(output,HdrMath.checked(frame))
                 }else{
-                    stage("HDR缓存")
-                    HdrResultStore.write(HdrResultStore.pairFile(resultFile),output,pixels,cancel)
-                    stage("HDR编码")
-                    HdrPairExport.encode(HdrResultStore.jpegFile(resultFile),output,pixels,cancel)
+                    stage("HDR亮度与色彩 · 缓存与编码")
+                    HdrPairExport.finish(HdrResultStore.jpegFile(resultFile),HdrResultStore.pairFile(resultFile),output,pixels,cancel)
                     hdrReady=true
                 }
                 cancel.check()

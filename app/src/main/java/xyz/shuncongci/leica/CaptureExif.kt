@@ -96,7 +96,79 @@ class CaptureExif(val bytes:ByteArray) {
         require(out.size()<=MAX_BYTES){"元数据过大，原片保留；请检查源EXIF"}
         val result=out.toByteArray();ByteBuffer.wrap(result).order(order).putInt(4,position)
         val parsed=CaptureExif(result);parsed.root();parsed.exif();parsed.gps()
+        // Keep ordinary exports byte-identical. Only reclaim space when the active EXIF
+        // would not fit a JPEG APP1 (6-byte Exif signature + classic TIFF <= 65533).
+        if(result.size>65527)inactiveThumbnailPrefix()?.let{prefix->
+            return CaptureExif(prefix).normalized(width,height,patches,outputSrgb,onInvalidInterop)
+        }
         return result
+    }
+    /** Only a single, structurally complete JPEG thumbnail occupying the EXACT TIFF tail.
+     * Keep the old IFD and every declared value at its original offset; remove image bytes,
+     * never compact/rebase arbitrary metadata. Unknown layouts fall back to the old strict
+     * capacity failure. The complete original packet (including thumbnail) is archived by
+     * writePreserved; this does not claim to interpret vendor-private MakerNote semantics.
+     */
+    private fun inactiveThumbnailPrefix():ByteArray? {
+        try {
+            val rootAt=u32(4);if(rootAt==0L)return null
+            val roots=root();val link=bounds(rootAt+2+12L*roots.size,4)
+            val thumbAt=u32(link);if(thumbAt==0L)return null
+            val thumb=directoryEntries(thumbAt,true)
+            val thumbEnd=thumbAt+2+12L*thumb.size+4
+            if(u32(bounds(thumbEnd-4,4))!=0L)return null // no additional image chain
+            val allowed=setOf(0x103,0x112,0x11a,0x11b,0x128,0x201,0x202,0x213)
+            if(thumb.any{it.tag !in allowed})return null
+            fun number(tag:Int,type:Int):Long?=thumb.singleOrNull{it.tag==tag}?.let{
+                if(it.type!=type || it.count!=1L)null else if(type==3)
+                    ByteBuffer.wrap(it.value).order(order).short.toLong() and 65535L
+                else ByteBuffer.wrap(it.value).order(order).int.toLong() and 0xffffffffL
+            }
+            if(number(0x103,3)!=6L)return null
+            val at=number(0x201,4)?:return null;val length=number(0x202,4)?:return null
+            if(at<8 || length<4 || at+length!=bytes.size.toLong() || thumbEnd>at)return null
+            bounds(at,length)
+            // Framing only, not entropy decoding; no pixel copy and no filesystem access.
+            val end=java.io.ByteArrayInputStream(bytes,at.toInt(),length.toInt()).use{
+                JpegCompletion.primaryEnd(it,length,Cancel())
+            }
+            // Some cameras reserve a fixed thumbnail allocation and zero-fill the bytes
+            // after its real EOI. Accept ONLY all-zero slack inside that declared allocation;
+            // a second JPEG, private trailer, or any nonzero byte remains unreclaimable.
+            if(end==null || end>length)return null
+            for(i in (at+end).toInt() until bytes.size)if(bytes[i]!=0.toByte())return null
+            val exifs=exif();val gpsAt=pointer(roots,0x8825);val exifAt=pointer(roots,0x8769)
+            val interopAt=pointer(exifs,0xa005)
+            val dirs=listOf(Triple(rootAt,roots,true),Triple(exifAt,exifs,false),
+                Triple(gpsAt,gps(),false),Triple(interopAt,directoryEntries(interopAt,false),false),
+                Triple(thumbAt,thumb,true)).filter{it.first!=0L}
+            if(dirs.map{it.first}.distinct().size!=dirs.size)return null
+            val spans=dirs.map{(offset,entries,next)->offset to offset+2+12L*entries.size+if(next)4 else 0}
+            if(spans.any{it.first<8 || it.second>at})return null
+            for(i in spans.indices)for(j in 0 until i)
+                if(spans[i].first<spans[j].second && spans[j].first<spans[i].second)return null
+            for((offset,entries,_)in dirs)for(e in entries){
+                // We do not follow other directory/pixel-pointer namespaces during reclamation.
+                val knownPointer=(offset==rootAt && e.tag in setOf(0x8769,0x8825)) || (offset==exifAt && e.tag==0xa005)
+                if((e.type==13 && !knownPointer) || e.tag in setOf(0x14a,0x111,0x144,0x145,0x120,0x121,0x14d))return null
+                if(e.value.size>4){
+                    val valueAt=ByteBuffer.wrap(e.raw).order(order).getInt(8).toLong() and 0xffffffffL
+                    if(valueAt<8 || valueAt+e.value.size>at)return null // includes unknown fields/MakerNote/GPS
+                    if(valueAt<link+4L && link<valueAt+e.value.size)return null // clearing the old link must not alter a shared value
+                }
+                // An unknown LONG can itself be a private TIFF-relative reference even when
+                // its four bytes are inline. Do not reclaim a tail it may address. Standard
+                // image dimensions/sensitivity are scalars, not references.
+                val scalar=(offset==rootAt && e.tag in setOf(0x100,0x101,0x116,0x117)) ||
+                    (offset==exifAt && e.tag in setOf(0xa002,0xa003,0x8831,0x8832,0x8833,0x8834,0x8835)) ||
+                    (offset==thumbAt && e.tag in setOf(0x201,0x202))
+                if(e.type==4 && !knownPointer && !scalar){
+                    val values=ByteBuffer.wrap(e.value).order(order)
+                    while(values.remaining()>=4){val n=values.int.toLong() and 0xffffffffL;if(n in at until bytes.size.toLong())return null}
+                }
+            }
+            return bytes.copyOf(at.toInt()).also{ByteBuffer.wrap(it).order(order).putInt(link,0)}
+        }catch(_:IllegalArgumentException){return null}catch(_:IllegalStateException){return null}
     }
     companion object {
         const val MAX_BYTES=1024*1024

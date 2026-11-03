@@ -25,7 +25,10 @@ internal object ExternalMetadataTransfer {
             "WEBP"->CaptureMetadataContainer.chunks(f,false).any{it.kind in setOf("ANIM","ANMF")}
             else->false
         }}
-        return Prepared(normalized,(!trailing || retained!=null) && !animated,bundle,badge)
+        // Additional containers can contain RAW, auxiliary images or animation that are not
+        // transferable as active output structures. Never infer deletion eligibility from EXIF.
+        val completeContainer=bundle.format in setOf("JPEG","PNG","WEBP")
+        return Prepared(normalized,completeContainer && (!trailing || retained!=null) && !animated,bundle,badge)
     }
     fun fallback(exif:ByteArray,badge:Boolean)=Prepared(exif,false,null,badge)
     fun write(encoded:File,target:File,prepared:Prepared,width:Int,height:Int,cancel:Cancel) {

@@ -138,7 +138,8 @@ object HdrMath {
             }
             cancel.check();write(y,rows,pixels)
         }
-        cancel.check();return Map(width,hdr.h,IntArray(0),exp(lo),exp(hi),max(peak,exp(hi)))
+        cancel.check();val display=hdr.displayCapacity?.let{HdrOutputColor.checkedCapacity(it)}?:max(peak,exp(hi))
+        return Map(width,hdr.h,IntArray(0),exp(lo),exp(hi),display)
     }
     fun reconstruct(base:Planes,map:Map,cancel:Cancel):Frame {
         require(base.width==map.w && base.height==map.h && map.pixels.size==base.size)
