@@ -31,3 +31,9 @@ Python 工具
 模型工具使用 PyTorch、torchvision、Transformers、ONNX、ONNX Runtime、NumPy、Hydra 和 onnxconverter-common；合成夹具工具还使用 Pillow、OpenCV。它们由使用者自行安装，不把环境和依赖源码打包到本目录。各自许可随其软件包，转换后发布时仍需检查相应声明。
 
 新增的转换入口取代了旧开发机专用脚本，去掉了固定磁盘路径、照片验证输入和自动拷贝资产。它们不下载权重、不改 Android 哈希，不保证产生与历史记录完全相同的 ONNX 字节。
+
+## 新增公开色彩资源
+
+3.0.0 随源码增加作者指定公开的徕卡一瞬与徕卡N瞬两份 LUT，路径、用途和SHA-256见 models.json。它们作为随附自有资源沿用根目录个人非商业协议，本次不更改 LICENSE、不扩展商业权利，不表示品牌授权或对第三方权利链作全面担保。
+
+视频原生部分使用 Android NDK 27.2.12479018 的 LLVM / libc++。上游完整 NOTICE 保存在 `app/src/main/assets/runtime-notices/NDK-27.2.12479018-NOTICE.txt`，随构建保留；它适用于对应第三方运行库/编译材料，不把项目整体改为 Apache-2.0。Android 系统编解码器由设备提供；本仓库不附FFmpeg、杜比SDK或第三方视频模型权重。未引入传奇专属加载、签名或保护实现。

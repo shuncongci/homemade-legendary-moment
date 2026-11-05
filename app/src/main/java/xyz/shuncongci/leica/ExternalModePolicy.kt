@@ -94,7 +94,7 @@ class ExternalArrivalGate(baseline:List<ExternalPhoto>,private val notBeforeWall
             if(p.key in known || !ExternalModePolicy.image(p.name))continue
             // Delayed MediaStore indexing of a pre-start photo must not turn it into a new capture.
             if(p.created>0 && p.created<notBeforeWall){known+=p.key;continue}
-            check(known.size+settling.size<ExternalModePolicy.MAX_ENTRIES){"本次监听条目已达上限，请停止后重新建立基线"}
+            check(known.size+settling.size<ExternalModePolicy.MAX_ENTRIES){"本次监听条目已达上限，请停止后重新开始监听"}
             if(p.pending || p.size<=0){settling.remove(p.key);pendingSeen=true;continue}
             val before=settling[p.key]
             val o=if(before==null || !p.sameBytes(before.photo))Observation(p,now,1) else Observation(p,before.since,before.count+1)

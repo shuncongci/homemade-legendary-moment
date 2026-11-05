@@ -18,6 +18,8 @@ class SpaceCamera {
         gyroMode=value;yaw=if(value)0f else DEFAULT_YAW;pitch=if(value)0f else DEFAULT_PITCH
         panX=0f;panY=0f;setParallax(0f,0f)
     }
+    /** Stop sensor ownership without snapping the visible pose back to the default camera. */
+    fun releaseGyro(){val y=displayYaw;val p=displayPitch;gyroMode=false;yaw=y;pitch=p;setParallax(0f,0f)}
     val displayYaw get()=(yaw+parallaxYaw).coerceIn(-.85f,.85f)
     val displayPitch get()=(pitch+parallaxPitch).coerceIn(-.55f,.55f)
     fun setParallax(yaw:Float,pitch:Float){

@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(videolut LANGUAGES CXX)
+add_library(videolut SHARED video_jni.cpp)
+target_compile_features(videolut PRIVATE cxx_std_17)
+target_compile_options(videolut PRIVATE -O2 -fvisibility=hidden -ffunction-sections -fdata-sections -fstack-protector-strong -fno-fast-math -ffp-contract=off)
+target_link_options(videolut PRIVATE -Wl,--gc-sections -Wl,-z,relro -Wl,-z,now -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384 "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/exports.map")

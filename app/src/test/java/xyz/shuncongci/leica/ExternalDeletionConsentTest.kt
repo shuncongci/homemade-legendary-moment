@@ -46,7 +46,7 @@ class ExternalDeletionConsentTest {
     @Test fun cancelledRunCannotRemove(){assertThrows(java.util.concurrent.CancellationException::class.java){guard(cancel=Cancel().also{it.cancelled=true})}}
     @Test fun noticeNamesLossAndPermanentDeletion(){
         val t=ExternalDeletionConsent.MESSAGE
-        for(s in listOf("我建议","动态照片","HDR","人像","拍摄信息","永久删除","系统","不补删"))assertTrue(s,t.contains(s))
+        for(s in listOf("重要照片请先备份","动态照片","HDR","人像","拍摄信息","永久删除","系统","不补删"))assertTrue(s,t.contains(s))
         assertTrue(ExternalDeletionConsent.ACCEPT.contains("我已了解"))
     }
 }

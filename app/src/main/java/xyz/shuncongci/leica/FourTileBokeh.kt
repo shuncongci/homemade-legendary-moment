@@ -58,7 +58,7 @@ object FourTileBokeh {
                 for((part,core) in parts.withIndex()){
                     val start=clock();partTiming=StageTiming(clock);stage(BokehProgress.label(part+1,parts.size,"虚化"))
                     val restored=checkpoint?.restoreRegion("base${part+1}",out,core,cancel)==true
-                    if(restored)stage(BokehProgress.label(part+1,parts.size,"复用基础区域（本轮读回）"))else{
+                    if(restored)stage(BokehProgress.label(part+1,parts.size,"复用基础区域"))else{
                         renderBase(colored,prep,core,out,cancel){done,total->
                             if(done%4==0 || done==total){
                                 cancel.check();onLayer(BokehLayerProgress(part+1,parts.size,done,total));cancel.check()

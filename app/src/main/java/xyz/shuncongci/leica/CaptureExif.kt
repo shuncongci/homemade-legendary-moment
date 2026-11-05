@@ -82,7 +82,7 @@ class CaptureExif(val bytes:ByteArray) {
             // Original bytes remain at their original offsets and in the verified raw archive.
             val parsedInterop=try{directoryEntries(interopPointer,false)}catch(t:ReferenceBoundsException){
                 if(onInvalidInterop==null)throw t
-                onInvalidInterop();null
+                MetadataExportDiagnostics.record(t);onInvalidInterop();null
             }
             if(parsedInterop==null)exif.remove(0xa005) else {
                 val interop=parsedInterop.associateBy{it.tag}.toMutableMap()

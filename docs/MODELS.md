@@ -1,10 +1,10 @@
-# 模型准备
+# 模型与 LUT 资源
 
-App 直接读取 app/src/main/assets/leica/ 下的 ONNX 文件，不在运行时下载模型。我随源码提供自有的 M9 调色模型，另外五个第三方模型不附带权重，需要你按各自许可自行获取并准备。下文列出我使用的模型版本、接口和转换方式。
+App 从本地 assets 读取资源，不在运行时下载。仓库随附两份冷暖 ONNX 与两份公开 LUT；第三方权重不附带，需按各自许可准备。下文保留历史转换接口和来源，当前是否必需按用途区分。
 
 先根据用途准备，不必一次下载全部：
 
-只调色时使用已包含的 M9。景深虚化需要 Depth Anything V2 Small 和 BokehMe ARNet。智能构图需要 GAIC MobileNetV2 reddim16。在景深中开启主体保护，还需要 SAM 2.1 Tiny 和 ViTMatte Small。
+冷暖照片调色使用随附 ONNX；照片徕卡一瞬和两种视频调色使用随附 LUT，无需额外权重。当前分层景深虚化需要 Depth Anything V2 Small，不依赖 ARNet；ARNet 条目仅为保留的历史接口/诊断。智能构图需要 GAIC MobileNetV2 reddim16；主体保护还需要 SAM 2.1 Tiny 和 ViTMatte Small。
 
 自有模型
 
@@ -111,7 +111,7 @@ App 对大图只推理含未知边界的块并重叠融合，不是把整张 204
 
 转换、放置和核对
 
-models.json 记录本工程实际使用的七份 ONNX（两份自有调色＋五份第三方模型） 的字节数、SHA-256、原检查点哈希和来源。把自行获得或转换的 ONNX 按清单中的文件名放置后运行：
+models.json 记录两份随附 ONNX、五份未附带的第三方/历史 ONNX 及两份公开 LUT 的字节数、SHA-256和来源。把自行获得或转换的 ONNX 按清单中的文件名放置后运行：
 
 ```bash
 python tools/check_models.py
@@ -132,3 +132,16 @@ GaicComposition.kt：GAIC。
 SubjectProtection.kt：SAM、ViTMatte。
 
 不要只改文件名、删除校验或降低精度来让模型“通过”。新导出的模型需要独立做 PyTorch/ONNX 一致性及真机检查，JVM 单元测试不负责验证模型推理。
+
+## 两份公开 LUT（3.0.0）
+
+| 风格 | 文件（相对 assets） | 字节数 | SHA-256 |
+|---|---|---:|---|
+| 徕卡一瞬 | `looks/leica-instant-v2.bin` | 6591012 | `87d1b46ae221b272227f845f2a7a984357b0d4056a79a2570b84c1271e3f9dcf` |
+| 徕卡N瞬 | `looks/leica-n-instant.bin` | 6591012 | `72d3e0d901aba3560738486a2fa2139a44e53b966e5d0b35ac0ca33d6fb16ff9` |
+
+徕卡一瞬同时用于照片和视频；N瞬只用于视频。这是作者此次指定公开的两种色彩资源，沿用现有个人非商业许可，不构成任何相机品牌官方授权，也不扩大第三方权利。
+
+格式：`PLUT0001` + big-endian int32边长65 + RGB Float64节点，红坐标最快变化；节点均为有限[0,1]值。文件是明文公开资源，不是ONNX，也不是传奇专属LUT。消费端固定校验长度、头部和SHA；照片PureLut及视频原生消费者另检查节点范围。
+
+`python tools/check_models.py --bundled-only` 同时检查两份模型和两份LUT。替换资源时不能只改名称/哈希来跳过数值验证；重新导出仍需核对色彩、精度、连续性及真机表现。

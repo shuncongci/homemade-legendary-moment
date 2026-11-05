@@ -11,6 +11,9 @@ keystore.properties
 .kotlin/
 .idea/
 **/build/
+.cxx/
+**/.cxx/
+.externalNativeBuild/
 *.iml
 *.apk
 *.aab

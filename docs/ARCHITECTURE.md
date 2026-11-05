@@ -1,16 +1,16 @@
 # 实现说明
 
-这份说明介绍我发布的 2.8.8 源码中的处理链路、工作尺寸和已知限制，供阅读或修改代码时参考。
+这份说明描述 3.0.0 公开版。历史变更归入 CHANGELOG，当前执行结果见 VALIDATION；不包含传奇专属色彩实现。
 
 主要代码在 app/src/main/java/xyz/shuncongci/leica。界面入口是 LeicaActivity.kt；LeicaEngine.kt 负责模型会话和处理链路。PhotoFlow.kt、PhotoWorkflow.kt 管理当前照片、处理方式和请求状态，界面操作不应直接绕过这些状态。
 
 调色和景深
 
-LeicaStyle.kt 定义冷调与暖调的稳定 ID、显示名称、ONNX 路径及 SHA-256。两份模型均输入等比例长边 1024 的 RGB，输出低频色彩。LabFusion.kt 把它与原图细节融合。开启景深时，先从原图获得相对深度，再结合焦点、光圈和 ARNet 渲染；深度不是米制距离，效果也不是某台相机镜头的物理标定。
+LeicaStyle.kt 定义三种照片风格的稳定 ID、路径和 SHA-256。冷暖两份 ONNX 按长边 1024 分析，由 LabFusion 融合原图细节；徕卡一瞬使用 PureLut 直接查表，不走 GAN 或细节融合。开启景深后，原图相对深度配合焦点、光圈及 FourTileBokeh 分层光学渲染；ARNet 只保留历史接口/诊断，不是当前基础虚化入口。深度不是米制距离，效果不代表某台相机的物理标定。
 
 NativeDepthMath.kt 将深度分析长边限制到 1220，并按 14 的倍数补边。GaicComposition.kt 负责构图评分，分析长边同样上限 1220。GaicCompositionMath.kt 和 CompositionGeometry.kt 等文件处理候选裁框与坐标。应用已有成片的裁框只记录选择，保存时裁切，不再跑一次调色或虚化。
 
-只有包含虚化的四种流程显示原图像素、长边 2048 或 1024 的尺寸选择。PhotoWorkflow.allowsOutputSelection 与 output 统一控制选择器和输出策略；切换到非虚化时忽略但不清空先前的虚化档位。
+只有包含虚化的四种流程显示原图≤1250万、长边 2048 或 1024 的尺寸选择。PhotoWorkflow.allowsOutputSelection 与 output 统一控制选择器和输出策略；切换到非虚化时忽略但不清空先前的虚化档位。
 
 非虚化使用 LeicaSizes.colorSize，保留来源像素到 50,000,000 像素，超过上限才等比缩小，小图不放大。调色仍按所选模式执行，GAN 分析长边仍固定为 1024；原图像素不表示所有模型都按原图尺寸推理。不要把模型工作尺寸、界面预览和最终输出混为一谈。
 
@@ -44,7 +44,7 @@ HdrAutoSource 在 Android 14+ 检测增益图；HdrSource 当前只接收 SDR �
 
 HdrPreview 只从具有真实增益图的来源或 HDR 成片 companion 加载显示内容，EXIF 方向、裁框和拷贝必须保留增益图，否则报错；它不是最终显影数据。CompareView 的 HDR 一侧禁止 SDR 原像素细节瓦片覆盖，深度/热力视图不冒充 HDR。窗口只在 RESUMED 且当前可见内容为 HDR 时请求 HDR，恢复后排队重查、暂停立即关闭请求。Android 14+ 与支持 HDR 的显示链路是实际显示前提，不支持的屏幕明确按 SDR 显示。
 
-HdrDevelopMode 显式区分 HDR 与 SDR。HDR 输入并列两个显影按钮，导入/导出各占原权重一半；普通 SDR 与仅构图保持原布局。选择写入 renderKey、成片元数据和编辑器状态；切换只清中间渲染缓存，保留原片与上次完整成片。旧 HDR 会话未记录选择时默认 HDR，来源非 HDR 时恢复为 SDR，不恢复隐式 AUTO。HDR 显影/保存失败不自动转 SDR，SDR 显影不能复用 HDR 成片。
+HdrDevelopMode 显式区分 HDR 与 SDR。HDR 输入通过 SDR/HDR 分段开关选择下次显影；普通 SDR 与仅构图保持对应操作布局。选择写入 renderKey、成片元数据和编辑器状态；切换只清中间渲染缓存，保留原片与上次完整成片。旧 HDR 会话未记录选择时默认 HDR，来源非 HDR 时恢复为 SDR，不恢复隐式 AUTO。HDR 显影/保存失败不自动转 SDR，SDR 显影不能复用 HDR 成片。
 
 2.5.2 的非虚化 HDR 通过 HdrReconstruction.renderRows、HdrPixels / HdrFloatFile、HdrResultStore.readRows 交接无损 Float32 文件，来源采样使用有界行缓存，读取使用有界 64 KiB 缓冲；不是把整幅数组换成同尺寸 direct/mmap。增益计算读取实际 JPEG 基底的最多 16 行，压缩中间数据使用私有临时文件；裁框使用线性光行视图并保持原 Double 积分顺序。检查点的字节、校验、原子提交和所有权规则保留。文件交接增加缓存空间与读写，空间不足按 I/O 失败处理，不转成 SDR 成功。兼容 Frame 接口及完整 HDR 虚化仍有整幅分配，不代表全路径内存已经解决。
 
@@ -58,44 +58,28 @@ EditSession 与 LatestCheckpoint 保存本机最近一张照片的状态。使�
 
 PhotoPixels 统一检查尺寸和系统解码结果；DngDimensions 读取主图元数据，拒绝仅解码出内嵌预览的 DNG。RegionPhoto 保留普通格式的区域解码，无法区域解码时按需使用全像素 bitmap；内存不足不会自动降分辨率。导入的可失败检查先于 EditSession 提交，提交后 UI 与持久来源在不可取消段内对齐。真实 DNG 兼容性仍取决于系统，不等于通用 RAW 开发器。
 
-PureLut.kt 提供无 Android 依赖的通用三线性查表：PLUT0001、big-endian int32 网格边长、RGB float64 节点，红坐标变化最快；边长 2–65，节点须为有限 [0,1]，文件长度和 SHA-256 必须匹配。输入输出为编码 SDR sRGB 字节；输出尺寸不变，无自动曝光、模型、空间蒙版或细节融合。合成测试独立构造节点，不包含成品风格数据。公开版没有把这一通用模块接到冷暖路径，也不附带私有 LUT。
+PureLut.kt 提供无 Android 依赖的通用三线性查表：PLUT0001、big-endian int32 网格边长、RGB float64 节点，红坐标变化最快；边长 2–65，节点须为有限 [0,1]，文件长度和 SHA-256 必须匹配。输入输出为编码 SDR sRGB 字节；输出尺寸不变，无自动曝光、模型、空间蒙版或细节融合。合成测试独立构造节点，不包含成品风格数据。公开版只把它接到照片徕卡一瞬，不改变冷暖模型路径；两份公开 LUT 为明文资源，不附传奇专属 LUT。
 
 渲染检查点键包含版本、稳定风格 ID 与资源哈希。键变化只清除未完成渲染缓存，不偷偷覆盖或重新生成已保存成片。
 
-测试范围
+## 视频链路
 
-verifyLeicaMath 运行不依赖 Android 设备的 JUnit 测试。我随源码提供的 leica 测试数据由程序生成，沿用旧文件名仅为兼容测试引用；其中 expected 图不是神经网络推理结果。其余历史数值夹具原样保留。
+VideoActivity 管理导入、轨道确认、暂停首帧、播放和导出；VideoTaskGate 拒绝陈旧任务交接。VideoContract 为两种视频色彩记录资源路径和哈希，VideoLutNative / ColorLutFiles 从普通 assets 验证读取，不依赖私有加载器。
 
-公开 2.8.3（versionCode 81）通过 2350 项 JVM 测试、Release Kotlin 和 AndroidTest Kotlin 编译及未签名 Release 构建；原2325项保留，新增25项HDR提亮回归。AndroidTest仅编译，未运行手机；使用官方ONNX Runtime 1.28.0 AAR显式离线覆盖。另有监听按钮置顶静态门禁。公开版仍不包含私有风格的72项测试，不与私有包2422项混用；未操作用户照片，真实界面/相册/HDR亮度仍待真机验收。
+CMake 构建 `videolut`，通过 JNI 注册 create/render/close；video_math.h 完成 LUT、sRGB/Rec.709/Rec.2020 与 PQ/HLG 转换及 YUV/P010 行处理。VideoFrameWorkers 按偶数行分割同一帧，最多 8 线程并行；帧序、PTS 和编码交接仍串行。HDR 使用有符号高光/宽色域残差扩展，不做逐帧自动曝光或静默 SDR 回退。
 
-## 2.6.0 外接、元数据与呈现
+VideoTracks / VideoIso 解析实际轨道、样本与编辑列表；多独立画面需要明确选择，不把相同系统 ID 当作基础层身份的充分证明。VideoDolby / VideoBitstream 仅放行可核验的 Profile 8 兼容基础层，去掉旧杜比 RPU/配置后输出普通 HEVC，不生成新杜比动态元数据。
 
-ExternalModeActivity / ExternalModeService 是独立的用户启动入口；ExternalArrivalGate 维护基线与稳定门禁，ExternalFolders 使用行 ID 游标、已知项跳过和单张定位，通知与闲置兜底共用定时器。ExternalQueueStore 是发布日志，不是历史相册待办；不会在重启后重排旧照片。ExternalPhotoInput、ExternalPhotoExport、ExternalOriginalGuard 和 ExternalSourceDeletion 固定来源/输出身份及指纹，成功发布并回读后才按用户策略尝试处置。
+VideoMuxTiming / VideoMuxExact 绑定编码样本、顺序、PTS 与末帧时长；音轨 mdhd 头时长差异可告警继续，但实际样本、时间戳、合法编辑、边界和最终回读仍受保护。VideoMetadata 的可选字段失败记录告警，不掩盖编解码/权限/发布失败。VideoExportCommit 在完整文件写入、同步与 SHA 回读后发布；失败清理本次半成品，原片和上次完整成片不被替换。
 
-CaptureExif / CaptureMetadataContainer 按容器写入本张来源的拍摄 EXIF/GPS 并核验，不搬用样例信息。LeicaBadgeExport 仅对已编码 JPEG 注入候选 ExifIFD 0x88B0 标志；主 JPEG 和增益 JPEG 不重新编码，不保证厂家相册识别。
+## 工作台、外接与隐私
 
-EditorPresentation / EditorLayout 用真实视图滑动与裁剪维护布局；DevelopView 在真实成片就绪后保持最后一帧并连续缩放/裁剪交接，不把 HDR 照片截图为 SDR 做转场。DiagnosticsPanel / LiveDiagnostics 提供指标卡片与按需详情；RuntimeMonitor 提供可选静音参数通知，编辑与外接偏好独立。
+EditorWorkspacePolicy、WorkspacePanels、FullscreenOverlay 等负责覆盖面板、真实入口几何、返回/生命周期及减少动画策略，不用 SDR 截图冒充 HDR 成片。ExternalModeActivity / ExternalModeService 由用户主动开启，ExternalArrivalGate 建立基线并等待新片稳定；停止/重启不补历史。
 
-这些变化不加入私有风格路径，冷暖两份模型和其哈希保持不变。使用和权限边界见 [外接与编辑说明](EXTERNAL-MODE.md)。
+ExternalDeletionConsent 的危险确认与元数据完整性分开记录。明确同意后可尝试处置附加数据未完整转存的原片，但仍必须满足成片发布、回读、源/成片指纹和系统授权；默认保留，不补删旧照片。用户操作和设备验收见 EXTERNAL-MODE / RELEASE。
 
-## 2.8 同步补充
+最近照片检查点、处理元数据和导出可能包含私人像素或原片 GPS；它们不是公开仓库内容，不应上传。`LegendaryMath` 等历史通用名称及合成夹具不等于私有“传奇一瞬”色彩实现。当前公开枚举没有该风格项。
 
-ExternalDeletionConsent 将删除授权版本与元数据完整性分开：旧授权回到保留原片，重新同意后以 verified 回读结果进入后续删除检查，而不是伪造 complete。ExternalMetadataTransfer 仍如实记录完整性，原片与成片指纹、发布、取消、系统授权及停止/重启保护保留。
+## 测试边界
 
-同步 2.6.0 之后的仅新增输入稳定性、PNG 同步、JPEG/EXIF/XMP 与源增益归档兼容修复；相册选择器权限分流、忙碌选图保留、完整组/区域检查点、远焦 d² 映射和逐点主体约束，以及调色到虚化的连续呈现。检查点不是任意指令续算；性能取决于输入和设备，不承诺每场景更快。
-
-## 2.8.1 手动编辑保存修复
-
-手动编辑保存时，越界或截断的 Interop 目录不再阻断保存：保留边界检查，只跳过该目录的成片链接并提示用户。原图不改不删，原始元数据字节仍保存在经过回读核验的归档中；归档不保证其他相册可读取。其他目录、冲突、未知类型和真实 I/O、权限、取消仍严格处理。外接和删除策略不变，不改照片像素、调色、虚化、尺寸、精度或 HDR。
-
-## 2.8.3 监听置顶与HDR提亮
-
-外接模式“开始监听”“停止监听”移到标题下、说明与权限之前，仅移动原有控件；启停回调、就绪和权限检查、按钮可用状态、扫描/队列/原片处置不变。同步2.8.2的新HDR成片1.25倍线性RGB增益（约+0.32EV）：SDR底图、调色/虚化、尺寸、精度和质量不变；原始检查点不曝光，最终交接仅应用一次，裁剪/缩放/恢复/重复保存不叠加。须重新HDR显影，旧成片和仅构图不额外提亮；越界/取消/I/O仍失败，不截断或因提亮溢出转SDR。实际屏幕亮度不保证增加25%，本次不是恢复2.6.0的整套虚化观感，也不是对“第二次导出缺元数据”问题的修复。
-
-布局静态回归：`python tools/check_external_controls.py`。
-
-## 2.8.8 · UI重构前源码检查点
-
-2.8.8 / 87 是 UI 重构前的源码回退点，包含2.8.4多段EXIF选择、2.8.5来源格式元数据、2.8.6 HDR受限亮度/色度增强与单次增强缓存复用、2.8.7 EXIF缩略图容量兼容、2.8.8 Adobe与ISO 21496-1双声明及严格匹配旧成片的私有临时兼容副本。保留图像质量、原片和发布/取消/权限/删除指纹门禁；显式HDR失败不转SDR，重复保存不叠加增强。目标手机、HyperOS/小米相册HDR显示尚未验收。
-
-公开版仅含既有冷暖风格、个人非商业许可与合成测试，不包含私有风格、签名材料、照片、APK或未授权第三方权重。本公开树已通过2612项JVM测试、Release Kotlin及AndroidTest Kotlin编译、未签名Release构建与版本/ZIP/16KiB对齐检查；AndroidTest未在手机运行。私有2684项不是公开树测试数。
+verifyLeicaMath 运行登记的 JVM 测试，AndroidTest 需另行在设备执行。合成结构、桌面原生调用、编译和构建不能代替 Android MediaCodec、显示、系统授权、相册、50MP 或长片音画同步验收。当前执行证据单独维护在 [VALIDATION.md](VALIDATION.md)。

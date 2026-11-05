@@ -45,6 +45,7 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
     private var session: HardwareSession? = null
     private val hardwareReport=HardwareReport()
     private var sessionStyle: LeicaStyle? = null
+    private var instantLut: PureLut? = null
     private val activeRun = ActiveNativeRun<OrtSession.RunOptions>()
 
     private val cacheDir = resultDirectory
@@ -397,7 +398,7 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
         val timing=StageTiming{SystemClock.elapsedRealtime()}
         fun stage(message: String){timing.start(BokehProgress.key(message));memory.stage(message);progress(message);cancel.check()}
         var bokehDetail="";var bokehReused=false
-        fun timingSummary()=timing.summary()+(if(bokehDetail.isBlank())""else "\n\n"+(if(bokehReused)"复用已完成虚化：以下为上次计算耗时\n"+bokehDetail.replace("已含在上方阶段中","上次已完成，本轮不重复计算")else bokehDetail))
+        fun timingSummary()=timing.summary()+(if(bokehDetail.isBlank())""else "\n\n"+(if(bokehReused)"复用已完成虚化：以下为上次计算耗时\n"+bokehDetail.replace("已含在上方阶段中","已复用上次完成结果")else bokehDetail))
         val t0=SystemClock.elapsedRealtime();hardwareReport.reset();cacheDir.mkdirs()
         var resultFile=File(cacheDir,"result-${java.util.UUID.randomUUID()}.png")
         var durableResult=false
@@ -432,7 +433,18 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
                 // Model sessions and masks are complete before color/ARNet starts.
                 val work=if(blurEnabled)decodeWorking(uri,cancel,outputSize,w to h) else null
                 return processingMode.selectColorPath(color={
-                    val (colored,inferMs,downscaled)=run{
+                    val (colored,inferMs,downscaled)=if(style==LeicaStyle.LEICA_INSTANT){
+                        onVisual?.invoke(DevelopEvent.ColorStart(blurEnabled))
+                        closeSession()
+                        stage("3/7 上色 · 徕卡一瞬 · ${w}×$h")
+                        val lut=instantLut ?: PureLut.read(context.assets.open(style.asset),style.sha256,cancel).also{instantLut=it}
+                        val (original,downscaled)=work ?: decodeWorking(uri,cancel,outputSize,w to h)
+                        check(original.width==w && original.height==h)
+                        // One source-to-LUT pass; never route the result through GAN or Fusion.
+                        val made=lut.render(original,cancel)
+                        stage("4/7 徕卡一瞬完成 · ${w}×$h")
+                        Triple(made,0L,downscaled)
+                    }else{
                         val (mw,mh)=LeicaSizes.modelSize(sourceWidth,sourceHeight)
                         onVisual?.invoke(DevelopEvent.ColorStart(blurEnabled))
                         stage("3/7 上色 · ${style.label} · ${mw}×$mh · 执行中")
@@ -440,7 +452,7 @@ class LeicaEngine(private val context: Context, private val diagnostic: ((String
                         val (gan,inferMs)=if(cached!=null)cached to (recovery?.store?.get("render.inferMs")?.toLongOrNull()?:0L)
                         else analyzeColor(uri,style,cancel).also{(pixels,ms)->recovery?.putPlanes("render.color",pixels,cancel,mapOf("render.inferMs" to ms.toString(),"job.stage" to "3","job.label" to "上色完成"))}
                         stage("4/7 融合 · ${w}×$h · 中央处理器")
-                        // Load full source only after color-model resources have been released.
+                        // Legacy color loads full source only after GAN input/tensors/session are released.
                         val (original,downscaled)=work ?: decodeWorking(uri,cancel,outputSize,w to h)
                         check(original.width==w && original.height==h)
                         Triple(Fusion.fuse(original,Resample.resize(gan,w,h,Resample.Filter.BICUBIC,cancel),cancel),inferMs,downscaled)

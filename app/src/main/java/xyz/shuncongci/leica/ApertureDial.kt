@@ -12,15 +12,17 @@ class ApertureDial(context:Context):View(context) {
     private val paint=Paint(Paint.ANTI_ALIAS_FLAG)
     private val path=Path()
     fun setAperture(value:Float){
-        FullFrameOptics.checkAperture(value);aperture=value;contentDescription="光圈$value"
+        FullFrameOptics.checkAperture(value)
+        if(aperture==value && contentDescription!=null)return
+        aperture=value;contentDescription="光圈$value；九叶光圈示意，数值越小景深越浅，不代表已经重新显影"
         val target=(ln(value/.95f)/ln(5.6f/.95f)).coerceIn(0f,1f)
         animator?.cancel()
         if(!ValueAnimator.areAnimatorsEnabled()){fraction=target;invalidate();return}
         animator=ValueAnimator.ofFloat(fraction,target).apply{duration=420;interpolator=PathInterpolator(.16f,1f,.3f,1f);addUpdateListener{fraction=it.animatedValue as Float;invalidate()};start()}
     }
     override fun onDraw(c:Canvas){
-        val d=resources.displayMetrics.density;val radius=min(height*.4f,43*d);val cx=width-radius-12*d;val cy=height/2f
-        val showIris=width>=320*d && resources.configuration.fontScale<=1.3f
+        val d=resources.displayMetrics.density;val radius=WorkspaceMotion.irisRadius(width.toFloat(),height.toFloat(),d);val cx=width-radius-10*d;val cy=height/2f
+        val showIris=radius>4*d // Always retain the optical preview, including narrow panels.
         paint.style=Paint.Style.STROKE;paint.strokeWidth=d;paint.color=0xff444342.toInt();if(showIris)c.drawCircle(cx,cy,radius+4*d,paint)
         val inner=radius*(.67f-.40f*fraction);val rotation=fraction*.45
         if(showIris)for(i in 0..8){
@@ -31,7 +33,7 @@ class ApertureDial(context:Context):View(context) {
             path.lineTo(cx+(cos(a+.65)*radius).toFloat(),cy+(sin(a+.65)*radius).toFloat());path.close()
             paint.style=Paint.Style.FILL;paint.color=0xff292a2b.toInt();c.drawPath(path,paint);paint.style=Paint.Style.STROKE;paint.color=0xff69645c.toInt();c.drawPath(path,paint)
         }
-        paint.style=Paint.Style.FILL;paint.typeface=Typeface.create("serif",Typeface.NORMAL);paint.textSize=36*resources.displayMetrics.scaledDensity;paint.color=0xffeee8dd.toInt();c.drawText("$aperture",4*d,cy+5*d,paint)
+        paint.style=Paint.Style.FILL;paint.typeface=Typeface.create("serif",Typeface.NORMAL);paint.textSize=min(36*resources.displayMetrics.scaledDensity,(width-2*radius-32*d)/2.8f).coerceAtLeast(12*d);paint.color=0xffeee8dd.toInt();c.drawText("$aperture",4*d,cy+5*d,paint)
         paint.typeface=Typeface.MONOSPACE;paint.textSize=10*resources.displayMetrics.scaledDensity;paint.color=0xff9d9890.toInt();c.drawText("光圈",6*d,cy+28*d,paint)
     }
     override fun onDetachedFromWindow(){animator?.cancel();super.onDetachedFromWindow()}

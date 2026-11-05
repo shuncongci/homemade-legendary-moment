@@ -5,12 +5,12 @@ import org.junit.Test
 
 /** Model identity, persistence, snapshot and interaction invariants; no Android mocks or training. */
 class ColorStyleTest {
-    @Test fun exactlyTwoUserStyles(){assertEquals(listOf("徕卡冷调","徕卡暖调"),LeicaStyle.entries.map{it.label})}
+    @Test fun threePublicPhotoStyles(){assertEquals(listOf("徕卡冷调","徕卡暖调","徕卡一瞬"),LeicaStyle.entries.map{it.label})}
     @Test fun defaultIsCool(){assertSame(LeicaStyle.COOL,LeicaStyle.DEFAULT);assertSame(LeicaStyle.COOL,PhotoFlow().style)}
     @Test fun stableIdsRestoreBothModes(){for(s in LeicaStyle.entries)assertSame(s,LeicaStyle.fromId(s.id))}
     @Test fun unknownSavedValueFallsBackSafely(){for(id in listOf(null,"","LEGENDARY","0","unknown"))assertSame(LeicaStyle.DEFAULT,LeicaStyle.fromId(id))}
-    @Test fun assetsAreDistinctEpoch6Models(){assertEquals(2,LeicaStyle.entries.map{it.asset}.toSet().size);for(s in LeicaStyle.entries)assertTrue(s.asset.endsWith("-epoch6.fp16.onnx"))}
-    @Test fun hashesAreDistinctValidSha256(){assertEquals(2,LeicaStyle.entries.map{it.sha256}.toSet().size);for(s in LeicaStyle.entries)assertTrue(s.sha256.matches(Regex("[a-f0-9]{64}")))}
+    @Test fun assetsAreDistinct(){assertEquals(3,LeicaStyle.entries.map{it.asset}.toSet().size);for(s in listOf(LeicaStyle.COOL,LeicaStyle.WARM))assertTrue(s.asset.endsWith("-epoch6.fp16.onnx"));assertEquals("looks/leica-instant-v2.bin",LeicaStyle.LEICA_INSTANT.asset)}
+    @Test fun hashesAreDistinctValidSha256(){assertEquals(3,LeicaStyle.entries.map{it.sha256}.toSet().size);for(s in LeicaStyle.entries)assertTrue(s.sha256.matches(Regex("[a-f0-9]{64}")))}
     @Test fun coldIsTheFourPointZeroCheckpoint(){assertEquals("leica/leica-cool-epoch6.fp16.onnx",LeicaStyle.COOL.asset)}
     @Test fun warmIsTheThreePointZeroCheckpoint(){assertEquals("leica/leica-warm-epoch6.fp16.onnx",LeicaStyle.WARM.asset)}
     @Test fun styleSelectionBeforePhotoDoesNotCreateResult(){val f=PhotoFlow();f.selectStyle(LeicaStyle.WARM);assertFalse(f.hasPhoto);assertFalse(f.hasResult);assertFalse(f.resultStale);assertFalse(f.canGenerate)}

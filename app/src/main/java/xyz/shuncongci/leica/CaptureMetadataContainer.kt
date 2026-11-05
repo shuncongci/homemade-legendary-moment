@@ -176,19 +176,20 @@ object CaptureMetadataContainer {
     }
     fun write(source:File,target:File,exif:ByteArray,width:Int,height:Int,cancel:Cancel)=writeExtra(source,target,exif,width,height,cancel,Extra())
     @JvmOverloads
-    internal fun writePreserved(encoded:File,target:File,original:PreservedMetadata.Bundle,width:Int,height:Int,badge:Boolean,cancel:Cancel,outputSrgb:Boolean=true,onInvalidInterop:(()->Unit)?=null){
+    internal fun writePreserved(encoded:File,target:File,original:PreservedMetadata.Bundle,width:Int,height:Int,badge:Boolean,cancel:Cancel,outputSrgb:Boolean=true,onInvalidInterop:(()->Unit)?=null,activeMetadata:PreservedMetadata.Bundle?=null,activeExif:ByteArray?=null){
         cancel.check();val dest=PreservedMetadata.read(encoded,cancel)
-        val srcExif=original.exif?.let(::CaptureExif)?:CaptureExif.empty()
-        val exif=srcExif.normalized(width,height,XiaomiLeicaBadge.patches(srcExif,badge),outputSrgb,onInvalidInterop)
+        val active=activeMetadata?:original
+        val srcExif=active.exif?.let(::CaptureExif)?:CaptureExif.empty()
+        val exif=activeExif?:srcExif.normalized(width,height,XiaomiLeicaBadge.patches(srcExif,badge),outputSrgb,onInvalidInterop)
         val archive=PreservedMetadata.archive(original)
-        val xml=PreservedMetadata.mergedXmp(original.xmp,dest.xmp,width,height,outputSrgb)
+        val xml=PreservedMetadata.mergedXmp(active.xmp,dest.xmp,width,height,outputSrgb)
         val jpeg=ArrayList<Pair<Int,ByteArray>>();val png=ArrayList<Pair<String,ByteArray>>();val webp=ArrayList<Pair<String,ByteArray>>()
         PreservedMetadata.jpegXmp(xml,dest.xmp,width,height,outputSrgb).forEach{jpeg.add(0xe1 to it)}
-        original.packets.forEach{p->when(p.kind){"J:ed"->PreservedMetadata.descriptiveIptc(p.bytes)?.let{jpeg.add(0xed to it)};"J:fe"->jpeg.add(0xfe to p.bytes)}}
+        active.packets.forEach{p->when(p.kind){"J:ed"->PreservedMetadata.descriptiveIptc(p.bytes)?.let{jpeg.add(0xed to it)};"J:fe"->jpeg.add(0xfe to p.bytes)}}
         PreservedMetadata.archiveSegments(archive).forEach{jpeg.add(0xeb to it)}
         png.add("lmEt" to archive);webp.add("LMET" to archive)
         if(xml!=null){png.add("iTXt" to ("XML:com.adobe.xmp\u0000\u0000\u0000\u0000\u0000".toByteArray()+xml));webp.add("XMP " to xml)}
-        if(original.format=="PNG")original.packets.filter{it.kind in setOf("P:iTXt","P:tEXt","P:zTXt") && !it.bytes.starts("XML:com.adobe.xmp\u0000".toByteArray())}.forEach{png.add(it.kind.substring(2) to it.bytes)}
+        if(active.format=="PNG")active.packets.filter{it.kind in setOf("P:iTXt","P:tEXt","P:zTXt") && !it.bytes.starts("XML:com.adobe.xmp\u0000".toByteArray())}.forEach{png.add(it.kind.substring(2) to it.bytes)}
         writeExtra(encoded,target,exif,width,height,cancel,Extra(jpeg,png,webp,xml!=null))
         try{check(PreservedMetadata.readArchive(target,cancel).contentEquals(archive)){"原始元数据完整性回读失败，未发布"}}catch(t:Throwable){target.delete();throw t}
     }

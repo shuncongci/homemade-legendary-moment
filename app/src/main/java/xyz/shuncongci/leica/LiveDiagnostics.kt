@@ -16,7 +16,7 @@ class LiveDiagnostics(
     private val failure:()->String?,
     private val detailsRequested:()->Boolean={true}
 ) {
-    data class Snapshot(val summary:String,val details:String,val phase:String,val metrics:List<String>)
+    data class Snapshot(val summary:String,val details:String,val phase:String,val metrics:List<String>,val error:String?=null)
     private var job:Job?=null
     private var handlerThread:HandlerThread?=null
     private val samples=ArrayList<Double>()
@@ -54,7 +54,7 @@ class LiveDiagnostics(
                         append("托管堆  ${mib(runtime.totalMemory()-runtime.freeMemory())} / ${mib(runtime.maxMemory())} 已用／上限\n")
                         append("原生堆  ${mib(Debug.getNativeHeapAllocatedSize())} / ${mib(Debug.getNativeHeapSize())} 已分配／堆大小\n")
                         append("系统内存  ${mib(system.availMem)} / ${mib(system.totalMem)} 可用／总量\n低内存  ${if(system.lowMemory)"是" else "否"} · 热状态  $thermal\n")
-                        append("\n窗口呈现\n刷新率 ${refresh?.let{number(it.toDouble())} ?: "—"} 赫兹 · 本轮 ${frames.size} 帧\n")
+                        append("\n窗口呈现\n刷新率 ${refresh?.let{number(it.toDouble())} ?: "—"} 赫兹 · 最近采样 ${frames.size} 帧\n")
                         append("中位耗时 ${DiagnosticMath.percentile(frames,.5)?.let{number(it)} ?: "—"} 毫秒\n百分之九十五分位 ${DiagnosticMath.percentile(frames,.95)?.let{number(it)} ?: "—"} 毫秒\n超刷新预算 ${slow?.toString() ?: "—"} 帧 · 回调丢失 $dropped\n")
                         append("\n工作线程 · ${UiText.threadState(thread?.state)}\n$phase\n")
                         append("\n内存单位：兆字节（二进制），各项不能相加。\n每1.5秒采样，仅本机；关闭或退到后台即停止。\n占用仅指本应用，不代表整机；图形与神经处理器占用不可用。\n帧耗时不是推理速度，静止窗口可能没有新帧。")
@@ -66,7 +66,7 @@ class LiveDiagnostics(
                     }
                     Snapshot(summary,details,EditorPresentation.stage(phase.lineSequence().firstOrNull().orEmpty()),listOf(
                         usage?.let{number(it.capacityPercent)+"%"}?:"—",number(mem.totalPss/1024.0)+" MB",thermal,
-                        mib(system.availMem)+" MB"+if(system.lowMemory)"\n内存紧张" else ""))
+                        mib(system.availMem)+" MB"+if(system.lowMemory)"\n内存紧张" else ""),recentFailure)
                 }
                 publish(snapshot)
             }

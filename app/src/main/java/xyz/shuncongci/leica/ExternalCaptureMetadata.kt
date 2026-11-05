@@ -45,11 +45,13 @@ object ExternalCaptureMetadata {
         return CaptureMetadataContainer.readExif(carrier).exif?:error("平台未能转存原片拍摄EXIF，原片保留")
     }
     internal fun prepare(source:File,work:File,width:Int,height:Int,watermark:Boolean,cancel:Cancel):ExternalMetadataTransfer.Prepared {
-        cancel.check();val captured=CaptureMetadataContainer.readExif(source)
-        if(captured.supported)return ExternalMetadataTransfer.prepare(source,width,height,watermark,cancel)
-        val exif=CaptureExif(platformExif(source,work,cancel))
-        val normalized=exif.normalized(width,height,XiaomiLeicaBadge.patches(exif,watermark))
-        cancel.check()
-        return ExternalMetadataTransfer.fallback(normalized,watermark)
+        cancel.check();val captured=ExportMetadataCompatibility.optional{CaptureMetadataContainer.readExif(source)}
+        if(captured==null || captured.supported)return ExternalMetadataTransfer.prepareForExport(source,width,height,watermark,cancel)
+        return ExportMetadataCompatibility.optional{
+            val exif=CaptureExif(platformExif(source,work,cancel))
+            val normalized=exif.normalized(width,height,XiaomiLeicaBadge.patches(exif,watermark))
+            cancel.check();MetadataExportDiagnostics.record("此来源格式的附加元数据无法完整转存，已使用平台可读EXIF兼容导出")
+            ExternalMetadataTransfer.fallback(normalized,watermark)
+        }?:ExternalMetadataTransfer.prepareForExport(source,width,height,watermark,cancel)
     }
 }

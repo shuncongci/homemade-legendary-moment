@@ -34,6 +34,8 @@ class CompositionActivity:AppCompatActivity() {
     private lateinit var retry:StudioButton;private lateinit var bar:ProgressBar
     private var exportMenu:ExportUi.Handle?=null;private var exportFormat=ExportFormat.DEFAULT
     private val cards=mutableListOf<View>()
+    private lateinit var drawer:EditorLayout;private lateinit var optionsButton:StudioButton
+    private var help:ExportUi.Handle?=null
     private fun dp(n:Int)=(n*resources.displayMetrics.density).toInt()
     private fun text(value:String,size:Float=14f)=TextView(this).apply{text=value;textSize=size;setTextColor(0xffddd5c8.toInt());setLineSpacing(dp(3).toFloat(),1f)}
     private fun LinearLayout.block(v:View){addView(v,LinearLayout.LayoutParams(MATCH_PARENT,WRAP_CONTENT).apply{topMargin=dp(10)})}
@@ -48,23 +50,38 @@ class CompositionActivity:AppCompatActivity() {
         exportFormat=ExportPreferences.load(this)
         if(state?.getString("export-format")==exportFormat.id)state.getIntArray("savedIndices")?.let{savedIndices.addAll(it.toList())}
         val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setBackgroundColor(0xff151617.toInt())}
-        val header=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL}
-        header.addView(text("智能构图",21f),LinearLayout.LayoutParams(0,WRAP_CONTENT,1f))
-        header.addView(StudioButton(this).apply{text="返回";setOnClickListener{leave()}});root.addView(header)
+        val header=WorkspaceActionRow(this).apply{gravity=Gravity.CENTER_VERTICAL}
+        val titleBar=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL}
+        titleBar.addView(StudioButton(this).apply{text="返回";borderVisible=false;setOnClickListener{leave()}})
+        titleBar.addView(text("智能构图",18f).apply{maxLines=2;ViewCompat.setAccessibilityHeading(this,true)},LinearLayout.LayoutParams(0,WRAP_CONTENT,1f).apply{marginStart=dp(8)})
+        header.addView(titleBar,LinearLayout.LayoutParams(0,WRAP_CONTENT,1f))
+        val tools=WorkspaceActionRow(this)
+        val info=StudioButton(this).apply{text="说明";borderVisible=false}
+        info.setOnClickListener{if(help?.isShowing!=true)help=WorkspacePanels.help(info,"composition")};tools.addView(info)
+        optionsButton=StudioButton(this).apply{text="方案";quietSelection=true;setOnClickListener{drawer.expanded=!drawer.expanded;isSelected=drawer.expanded}}
+        tools.addView(optionsButton);header.addView(tools,LinearLayout.LayoutParams(0,WRAP_CONTENT,1f));root.addView(header)
         preview=CompositionCropView(this)
-        val panel=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(4),0,dp(4),dp(12))}
+        val panel=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(14),0,dp(14),dp(12))}
         dimensions=text("${intent.getStringExtra("label")?:"原图"} · ${output.label}");panel.block(dimensions)
-        bar=ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal).apply{isIndeterminate=true};panel.block(bar)
-        status=text("正在分析画面…",12f).apply{accessibilityLiveRegion=View.ACCESSIBILITY_LIVE_REGION_POLITE};panel.block(status)
-        panel.block(text("选择喜欢的方案，再点导出。\n拖动空间视角不会改变裁框。",11f))
+        panel.block(text("选择方案后收起以查看完整裁框，再点下方导出。手势只改变空间视角，不改变裁框。",12f))
         proposals=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};panel.block(proposals)
-        apply=StudioButton(this,true).apply{text="导出";setOnClickListener{showExport()}};panel.block(apply)
-        cancel=StudioButton(this).apply{text="取消";setOnClickListener{cancelTask()}};panel.block(cancel)
-        retry=StudioButton(this).apply{text="重试";setOnClickListener{analyse()}};panel.block(retry)
-        root.addView(EditorLayout(this,preview,ScrollView(this).apply{addView(panel)}),LinearLayout.LayoutParams(MATCH_PARENT,0,1f))
+        retry=StudioButton(this).apply{text="重试分析";setOnClickListener{analyse()}};panel.block(retry)
+        val shell=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;background=WorkspacePanels.selectionBackground(this,false)}
+        val heading=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(dp(14),0,dp(8),0)}
+        heading.addView(text("构图方案",16f),LinearLayout.LayoutParams(0,WRAP_CONTENT,1f))
+        heading.addView(StudioButton(this).apply{text="收起";setOnClickListener{drawer.expanded=false;optionsButton.isSelected=false}})
+        shell.addView(heading);shell.addView(ScrollView(this).apply{addView(panel)},LinearLayout.LayoutParams(MATCH_PARENT,0,1f))
+        drawer=EditorLayout(this,preview,shell).apply{anchor=optionsButton;expanded=false}
+        root.addView(drawer,LinearLayout.LayoutParams(MATCH_PARENT,0,1f))
+        bar=ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal).apply{isIndeterminate=true};root.addView(bar,LinearLayout.LayoutParams(MATCH_PARENT,dp(3)))
+        status=text("正在分析画面…",12f).apply{maxLines=3;ellipsize=android.text.TextUtils.TruncateAt.END;accessibilityLiveRegion=View.ACCESSIBILITY_LIVE_REGION_POLITE;setPadding(dp(4),dp(6),dp(4),dp(6))};root.addView(status)
+        val footer=WorkspaceActionRow(this)
+        cancel=StudioButton(this).apply{text="取消处理";setOnClickListener{cancelTask()}};footer.addView(cancel,LinearLayout.LayoutParams(0,WRAP_CONTENT,1f))
+        apply=StudioButton(this,true).apply{text="导出";setOnClickListener{showExport()};setOnLongClickListener{if(help?.isShowing!=true)help=WorkspacePanels.help(this,"export");true}};footer.addView(apply,LinearLayout.LayoutParams(0,WRAP_CONTENT,1f))
+        root.addView(footer,LinearLayout.LayoutParams(MATCH_PARENT,WRAP_CONTENT))
         ViewCompat.setOnApplyWindowInsetsListener(root){v,i->val inset=i.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout());v.setPadding(dp(12)+inset.left,dp(6)+inset.top,dp(12)+inset.right,dp(6)+inset.bottom);i}
         setContentView(root)
-        onBackPressedDispatcher.addCallback(this,object:OnBackPressedCallback(true){override fun handleOnBackPressed(){leave()}})
+        onBackPressedDispatcher.addCallback(this,object:OnBackPressedCallback(true){override fun handleOnBackPressed(){if(drawer.expanded){drawer.expanded=false;optionsButton.isSelected=false}else leave()}})
         analyse()
     }
     private fun cancelTask(){token?.cancelled=true;gaic.cancelRun();engine?.cancelRun();cancel.isEnabled=false;status.text="正在取消…"}
@@ -125,9 +142,10 @@ class CompositionActivity:AppCompatActivity() {
     }
     private fun showSuggestions(){
         proposals.removeAllViews();cards.clear();val data=loaded?:return
+        drawer.expanded=true;optionsButton.isSelected=true
         items.forEachIndexed{index,item->
             val card=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(dp(8),dp(8),dp(8),dp(8));isFocusable=true;isClickable=true;contentDescription=item.title
-                setOnClickListener{if(!busy && selected!=index){selected=index;preview.selectProposal(index);status.text=if(index in savedIndices)"此方案已保存"else "已选：${item.title}";refresh()}}
+                setOnClickListener{if(!busy){if(selected!=index){selected=index;preview.selectProposal(index);status.text=if(index in savedIndices)"此方案已保存"else "已选：${item.title}"};drawer.expanded=false;optionsButton.isSelected=false;refresh()}}
             }
             card.addView(CompositionThumbnail(this,data.bitmap,item.crop),LinearLayout.LayoutParams(dp(86),dp(68)))
             card.addView(text(item.title),LinearLayout.LayoutParams(0,WRAP_CONTENT,1f).apply{marginStart=dp(12)})
@@ -169,7 +187,7 @@ class CompositionActivity:AppCompatActivity() {
         bar.visibility=if(busy)View.VISIBLE else View.GONE;cancel.visibility=bar.visibility;cancel.isEnabled=token?.cancelled!=true
         retry.visibility=if(!busy && loaded==null)View.VISIBLE else View.GONE
         apply.isEnabled=!busy && loaded!=null;apply.text=if(busy && loaded!=null)"正在出图…"else "导出"
-        cards.forEachIndexed{i,v->v.isEnabled=!busy;v.isSelected=i==selected;v.setBackgroundColor(if(i==selected)0xff54342e.toInt()else 0xff242526.toInt())}
+        cards.forEachIndexed{i,v->v.isEnabled=!busy;v.isSelected=i==selected;v.background=WorkspacePanels.selectionBackground(v,i==selected)}
         items.getOrNull(selected)?.let{item->
             val plan=CompositionOutput.plan(sourceW,sourceH,item.crop,output)
             dimensions.text="${intent.getStringExtra("label")?:"原图"} · ${plan.width}×${plan.height}"
@@ -179,6 +197,7 @@ class CompositionActivity:AppCompatActivity() {
     override fun onSaveInstanceState(out:Bundle){super.onSaveInstanceState(out);out.putInt("selected",selected);out.putString("export-format",exportFormat.id);out.putIntArray("savedIndices",savedIndices.toIntArray())}
     override fun onResume(){super.onResume();if(::preview.isInitialized)preview.setActive(true)}
     override fun onPause(){
+        help?.dismiss();help=null;drawer.settle()
         exportMenu?.dismiss();exportMenu=null
         if(::preview.isInitialized)preview.setActive(false)
         cards.forEach{it.animate().cancel();it.alpha=1f;it.translationY=0f}

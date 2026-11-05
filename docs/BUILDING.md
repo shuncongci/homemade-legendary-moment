@@ -1,101 +1,61 @@
-# 构建
+# 构建指南 · 3.0.0 公开版
 
-以下步骤用于构建我发布的源码版本。源码不包含我的签名密钥，也不附带第三方模型权重；模型准备方法见模型说明（MODELS.md）。
+## 环境
 
-环境
+| 组件 | 版本 |
+|---|---|
+| JDK | 17（较新兼容 JDK 以实际工具链验证为准） |
+| Android SDK / targetSdk | 35 |
+| 最低 Android | API 26 |
+| Android Gradle Plugin / Kotlin / Gradle | 8.7.3 / 2.0.21 / 8.9 |
+| NDK | 27.2.12479018 |
+| CMake | 3.22.1 |
 
-JDK 17。
+在 Android Studio 的 SDK Manager 安装平台、Build Tools、NDK 和 CMake。SDK 路径放入本地 `local.properties`，或设置 `ANDROID_HOME`；不要提交个人路径文件。仓库保留镜像与官方依赖源，按网络情况调整顺序。首次构建需要网络，缓存和 SDK 完整后才能离线构建。
 
-Android SDK Platform 35，Build Tools 35.0.0（Gradle 可提示安装所需组件）。
-
-Android Gradle Plugin 8.7.3、Kotlin 2.0.21、Gradle 8.9，版本在工程中固定。
-
-运行设备至少 Android 8.0（API 26）。
-
-用 Android Studio 打开本目录，等待 Gradle 同步。也可设置 JAVA_HOME、ANDROID_HOME 后使用命令行。local.properties 是每台电脑自己的 SDK 路径，不应从别人的工程照抄，也不要提交。
-
-仓库保留了原工程的镜像源与官方回退源；如果所在网络不适用，可在 settings.gradle.kts 调整仓库顺序。首次构建需要网络，依赖准备齐全后才可使用 --offline。
-
-调试与测试
+## 常用命令
 
 ```powershell
 .\gradlew.bat :app:assembleDebug
 .\gradlew.bat :app:verifyLeicaMath
+.\gradlew.bat :app:compileReleaseKotlin :app:compileDebugAndroidTestKotlin :app:assembleRelease
+python tools/check_models.py --bundled-only
+python tools/check_public_source.py
 ```
 
-macOS/Linux 用 ./gradlew（首次执行 chmod +x gradlew）。标准测试入口 :app:testDebugUnitTest 也保留；verifyLeicaMath 直接用 JUnitCore 运行同一套断言，适合 Gradle 测试进程遇到路径问题的环境。
+macOS / Linux 使用 `./gradlew`，首次运行 `chmod +x gradlew`。标准 `:app:testDebugUnitTest` 仍可使用；`verifyLeicaMath` 用 JUnitCore 运行登记的测试类，适合测试 worker 遇到路径问题的环境。设备测试源码仅编译不代表已经在手机执行，实际验证见 [验证状态](VALIDATION.md)。
 
-公开 2.8.3（versionCode 81）通过 2350 项 JVM 测试、Release Kotlin 和 AndroidTest Kotlin 编译及未签名 Release 构建；原2325项保留，新增25项HDR提亮回归。AndroidTest仅编译，未运行手机；使用官方ONNX Runtime 1.28.0 AAR显式离线覆盖。另有监听按钮置顶静态门禁。公开版仍不包含私有风格的72项测试，不与私有包2422项混用；未操作用户照片，真实界面/相册/HDR亮度仍待真机验收。
+默认输出：`app/build/outputs/apk/debug/app-debug.apk` 和 `app/build/outputs/apk/release/app-release-unsigned.apk`。Debug 使用本机调试签名；Release 开启 R8/资源裁剪，**默认未配置发布签名**。
 
-默认输出为 app/build/outputs/apk/debug/app-debug.apk。Debug 使用你电脑上的 Android 调试密钥签名，不使用我的发布签名。如果与已安装版本的签名不同，不能直接覆盖安装。卸载可能丢失应用数据，处理签名冲突前请先确认备份和数据保留方式。
+公开版与私有 V3 使用同一应用 ID `xyz.shuncongci.leica.v3`，不同签名不能直接覆盖。需要并存时，在自己的本地构建配置中选择独立应用 ID；不要直接卸载丢失数据。个人签名应使用自己的 keystore，密钥、密码、`.env` 不得提交，也不改变个人非商业许可范围。
 
-缺少第三方模型不会阻止编译，但调用相应功能会失败。模型准备步骤见 MODELS.md。不要把“编译成功”当作“完整推理已可用”。
+## 资源与依赖
 
-Release
+随仓库提供两份冷暖 ONNX 和两份公开 LUT。纯 LUT 照片调色、视频调色无需第三方权重。景深需要深度模型；构图和主体保护分别还需 GAIC、SAM/ViTMatte。ARNet 仅保留给历史接口/诊断，不是当前分层虚化的必需权重。详见 [模型与 LUT](MODELS.md)。缺权重仍可编译，不代表相应功能能运行。
+
+ONNX Runtime 默认从 Maven 取得 `com.microsoft.onnxruntime:onnxruntime-android:1.28.0`。不随源码附带 AAR，离线环境可显式覆盖同一版本：
 
 ```powershell
-.\gradlew.bat :app:assembleRelease
+.\gradlew.bat --offline -PonnxruntimeAar="/absolute/path/onnxruntime-android-1.28.0.aar" :app:assembleRelease
 ```
 
-Release 开启 R8 和资源裁剪，默认不配置签名，输出未签名 APK。我不随源码提供签名材料，因此自行构建的安装包不能使用我的发布签名。
+已登记官方 AAR 的 SHA-256：`f351a0638696f54b35184290dbc001d66daae17281ad0b548d2c70347d53b8a9`。本地覆盖不是替换运行时版本的兼容性保证。
 
-需要个人签名时，在本地配置自己的 keystore 或使用 Android Studio 的签名向导。密钥、密码、keystore.properties、.env 等都不要提交。配置自己的签名不会改变本项目“限个人非商业使用”的许可范围，也不会补齐第三方权重授权。
+## Windows 原生工具路径
 
-依赖
+本版本新增普通 C++ 视频 LUT 库，不使用私有构建/保护脚本。若 Windows CMake 遇到非 ASCII 路径问题，可在本机为**同一份目录**建立 ASCII 路径联接，将 SDK、项目、原生 staging、构建输出和 TEMP/TMP 置于可用的 ASCII 路径；不要复制生产工程或修改共享 SDK。可选 Gradle 参数：
 
-ONNX Runtime 使用 Maven Central 的 com.microsoft.onnxruntime:onnxruntime-android:1.28.0。源码没有自带 AAR，也不包括早期 QNN/双运行时试验包。
+- `-PnativeSourceDir=/absolute/ascii/path/to/cpp`：CMake 源目录，默认 `app/src/main/cpp`。
+- `-PnativeBuildStagingDir=/absolute/ascii/path/to/cxx`：原生 staging。
+- `-PbuildOutputRoot=/absolute/path/to/build`：隔离构建输出。
+- `--project-cache-dir /absolute/path/to/cache`：隔离项目缓存。
 
-离线环境可先自行取得同版本官方 AAR，再显式指定：
+这些是本机路径参数，不应把某位维护者的机器路径写入仓库。CMake、NDK 和编译器仍使用上表版本；不以禁用原生构建或删除功能让检查通过。
 
-```powershell
-.\gradlew.bat --offline -PonnxruntimeAar="/your/path/onnxruntime-android-1.28.0.aar" :app:assembleDebug
-```
+## 测试数据
 
-该 AAR 的已核对 SHA-256 为 f351a0638696f54b35184290dbc001d66daae17281ad0b548d2c70347d53b8a9。本地覆盖是为离线构建预留的入口，不是更换运行时版本的兼容性保证。
+`leica/` RGB 测试资源由程序生成，Pillow/OpenCV 提供重采样和 LAB 参考，不是私人样片或模型质量证明。必要时使用 `tools/generate_test_fixtures.py` 重建，并检查所有差异。历史 `legendary/`、`highlight-v4/`、`exact-radiance*` 是已公开的小尺寸数值回归资源，名称不代表私有色彩功能。它们不是重新训练数据，也不是手机效果验收。
 
-合成测试数据
+新增公开 LUT 测试核对实际资源、节点范围、哈希、破损/取消与照片尺寸/源像素保护；通用 `PureLutTest` 仍使用独立合成节点。视频时间戳、轨道、杜比兼容门禁、音频头时长兼容与导出提交测试使用合成结构/回调，不删除真实照片。不要改旧期望或删测试来掩盖真实失败。
 
-工程已附带运行测试所需的数据。leica/ 的旧照片夹具被替换为程序生成的 RGB 渐变、结构和色偏；Pillow 计算重采样参考，OpenCV 计算 LAB 和融合参考，不调用待测 Kotlin 算法生成期望值。
-
-需要重建这一组数据时：
-
-```bash
-python -m pip install -r tools/requirements-fixtures.txt
-python tools/generate_test_fixtures.py
-```
-
-保留的 legendary/ 和 highlight-v4/ 为历史小尺寸数值回归夹具。它们的输入已作独立合成特征检查，但这里没有收录完整的原始生成脚本；不要把这些参考数据当成真实照片效果或模型输出的证明。名称中的旧风格名仅为兼容历史测试资源引用。
-
-PureLutTest 在内存中构造身份表、通道交换和多线性函数节点；不需要下载 LUT 或照片。DngDimensionsTest 使用合成 TIFF/DNG 元数据，PhotoImportCommitTest 检查提交边界；这些不能替代真实相机 DNG 和系统 codec 验证。AndroidTest 的 `raw-import` 诊断只创建合成 GIF/PNG/JPEG，不是 RAW 画质测试。
-
-2.5.2 的 TransferPerformanceTest、HdrStreamingTest、ReconstructionSpeedTest 和 SubjectRecoveryTest 使用确定性合成像素、增益图和蒙版，连同测试专用的 Baseline 类保留原标量表达式，供复核逐位数值、缓存字节/元数据、取消/失败清理与恢复身份。它们不读取维护者的本地审计目录，不附私人样片；重建测试也不以墙钟耗时断言性能。测试源码的存在不代表本次已经执行或通过。
-
-HdrDevelopModeTest 新增 35 项：显式 HDR/SDR 路由、按钮权重、真实增益图显示策略、独立缓存、持久化选择与取消/恢复保留原片和上次成片。HdrDiagnostic 增加生产显示解码、8 种 EXIF 方向、裁剪及拷贝的增益图保留探针，使用合成图；这些探针在2.6.0公开树仅编译，未在设备运行。HDR 真实亮度、触控/旋转、前后台和相册显示必须在支持的真机另验。
-
-把验证输出放到工程外
-
-通常不需要此参数。如果希望将构建产物和项目缓存放在源码目录外，可指定：
-
-```powershell
-.\gradlew.bat --project-cache-dir ../local-check/gradle-cache -PbuildOutputRoot="/absolute/path/to/local-check/build" :app:verifyLeicaMath
-```
-
-建议使用绝对路径；生成的 APK、日志和缓存不属于公开源码清单。.gitignore 已排除常规构建目录，但发布前仍应检查目录内容，不能仅依赖忽略规则保护凭据。
-
-2.6.0 新增的外接、EXIF/容器、扫描、监测与编辑呈现测试使用内存中的合成身份、回调、TIFF 字段及 16×12 纯色容器，不读取相册或私人样片；原片处置测试没有删除用户照片。当前登记共2350项，保留此前公开测试及夹具。公开构建仍从 Maven 获取依赖或显式使用官方本地 AAR，不依赖作者的保护或签名材料。
-
-## 2.8.1 手动编辑保存修复
-
-手动编辑保存时，越界或截断的 Interop 目录不再阻断保存：保留边界检查，只跳过该目录的成片链接并提示用户。原图不改不删，原始元数据字节仍保存在经过回读核验的归档中；归档不保证其他相册可读取。其他目录、冲突、未知类型和真实 I/O、权限、取消仍严格处理。外接和删除策略不变，不改照片像素、调色、虚化、尺寸、精度或 HDR。
-
-## 2.8.3 监听置顶与HDR提亮
-
-外接模式“开始监听”“停止监听”移到标题下、说明与权限之前，仅移动原有控件；启停回调、就绪和权限检查、按钮可用状态、扫描/队列/原片处置不变。同步2.8.2的新HDR成片1.25倍线性RGB增益（约+0.32EV）：SDR底图、调色/虚化、尺寸、精度和质量不变；原始检查点不曝光，最终交接仅应用一次，裁剪/缩放/恢复/重复保存不叠加。须重新HDR显影，旧成片和仅构图不额外提亮；越界/取消/I/O仍失败，不截断或因提亮溢出转SDR。实际屏幕亮度不保证增加25%，本次不是恢复2.6.0的整套虚化观感，也不是对“第二次导出缺元数据”问题的修复。
-
-布局静态回归：`python tools/check_external_controls.py`。
-
-## 2.8.8 · UI重构前源码检查点
-
-2.8.8 / 87 是 UI 重构前的源码回退点，包含2.8.4多段EXIF选择、2.8.5来源格式元数据、2.8.6 HDR受限亮度/色度增强与单次增强缓存复用、2.8.7 EXIF缩略图容量兼容、2.8.8 Adobe与ISO 21496-1双声明及严格匹配旧成片的私有临时兼容副本。保留图像质量、原片和发布/取消/权限/删除指纹门禁；显式HDR失败不转SDR，重复保存不叠加增强。目标手机、HyperOS/小米相册HDR显示尚未验收。
-
-公开版仅含既有冷暖风格、个人非商业许可与合成测试，不包含私有风格、签名材料、照片、APK或未授权第三方权重。本公开树已通过2612项JVM测试、Release Kotlin及AndroidTest Kotlin编译、未签名Release构建与版本/ZIP/16KiB对齐检查；AndroidTest未在手机运行。私有2684项不是公开树测试数。
+历史测试数字归入 [版本记录](CHANGELOG.md)，不再混入本构建指南的当前状态。

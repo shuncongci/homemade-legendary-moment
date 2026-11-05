@@ -25,6 +25,7 @@ class DepthStageView(context:Context):View(context) {
     private var time=0f
     private val camera=SpaceCamera()
     fun setGyroMode(value:Boolean){cancelGestures();camera.setGyroMode(value);postInvalidateOnAnimation()}
+    fun releaseGyro(){cancelGestures();camera.releaseGyro();postInvalidateOnAnimation()}
     private var mesh:SpaceMesh?=null
     private var meshZ=FloatArray(0)
     private var atlas:Bitmap?=null

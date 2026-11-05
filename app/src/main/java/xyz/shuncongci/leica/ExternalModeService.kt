@@ -29,7 +29,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 data class ExternalModeStatus(val running:Boolean=false,val ready:Boolean=false,val stopping:Boolean=false,val working:Boolean=false,
     val stage:String="未开启 · 仅开始监听后的新增照片会处理",val currentId:String="",val name:String="",val queued:Int=0,
     val saved:Int=0,val failed:Int=0,val baseline:Int=0,val currentStarted:Long=0,val lastOutput:String="",val lastError:String="",
-    val runId:String="",val deletedOriginals:Int=0,val pendingOriginals:Int=0,val retainedOriginals:Int=0,val lastOriginalStatus:String="") {
+    val runId:String="",val deletedOriginals:Int=0,val pendingOriginals:Int=0,val retainedOriginals:Int=0,val lastOriginalStatus:String="",val lastMetadataError:String="") {
     fun description():String=buildString{
         append(stage);if(name.isNotEmpty())append("\n").append(name)
         append("\n已保存 ").append(saved).append(" 张 · 排队 ").append(queued).append(" 张 · 失败 ").append(failed).append(" 张")
@@ -37,6 +37,7 @@ data class ExternalModeStatus(val running:Boolean=false,val ready:Boolean=false,
         if(deletedOriginals>0 || pendingOriginals>0 || retainedOriginals>0)append("\n原片已删除 ").append(deletedOriginals).append(" 张 · 待系统授权 ").append(pendingOriginals).append(" 张 · 未删除/需核对 ").append(retainedOriginals).append(" 张")
         if(lastOriginalStatus.isNotEmpty())append("\n原片：").append(lastOriginalStatus)
         if(lastError.isNotEmpty())append("\n最近错误：").append(lastError)
+        if(lastMetadataError.isNotEmpty())append("\n最近元数据错误：").append(lastMetadataError)
     }
 }
 object ExternalModeRuntime {
@@ -153,6 +154,7 @@ class ExternalModeService:Service() {
         val work=File(cacheDir,"external-camera-work/$run/${job.id}")
         var result:LeicaEngine.Result?=null
         var published=false
+        val metadataErrors=MetadataExportDiagnostics.Report()
         var originalEligible=false
         var diagnosticStage="读取原片"
         val wake=(getSystemService(Context.POWER_SERVICE) as PowerManager).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"$packageName:external-photo").apply{setReferenceCounted(false)}
@@ -177,9 +179,11 @@ class ExternalModeService:Service() {
             }
             cancel.check();publish{it.copy(stage=if(result.hdrReady)"导出 HDR · Ultra HDR JPEG"else "导出 SDR · ${settings.format.label}${result.hdrFallback.takeIf{v->v.isNotEmpty()}?.let{v->" · HDR不支持：$v"}.orEmpty()}")}
             diagnosticStage="读取拍摄元数据"
-            val metadata=ExternalCaptureMetadata.prepare(source,File(work,"metadata"),result.width,result.height,settings.metadataWatermark,cancel)
-            diagnosticStage="编码与保存成片"
-            val output=exporter.save(job,result,settings.format,cancel,metadata,File(work,"export"))
+            val (metadata,output)=MetadataExportDiagnostics.collect(metadataErrors){
+                val metadata=ExternalCaptureMetadata.prepare(source,File(work,"metadata"),result.width,result.height,settings.metadataWatermark,cancel)
+                diagnosticStage="编码与保存成片"
+                metadata to exporter.save(job,result,settings.format,cancel,metadata,File(work,"export"))
+            }
             published=true
             publish{it.copy(lastOutput=output)}
             if(settings.original==ExternalOriginalPolicy.DELETE_AFTER_SAVE){
@@ -205,6 +209,7 @@ class ExternalModeService:Service() {
             // A source-retention failure must never relabel/requeue a successfully published output.
             if(!cancel.cancelled)publish{it.copy(lastError="${job.photo.name}：$failure")}
         }finally{
+            metadataErrors.description(published)?.let{error->publish{it.copy(lastMetadataError="${job.photo.name}：$error")}}
             result?.original?.recycle();result?.result?.let{if(it!==result?.original)it.recycle()}
             try{engine?.close()}finally{engine=null;currentCancel=null;if(wake.isHeld)wake.release();work.deleteRecursively()}
             publish{it.copy(working=false,name="",currentId="",stage=if(stopping.get())"正在停止并清理本张半成品"else "监听中 · 等待新照片")}

@@ -81,6 +81,37 @@
       "sha256": "e07f57abe253b6a4f81cc87f9b4f5145f9893d375f7f48690710d4168b59e51b",
       "bytes": 103928662,
       "license": "Apache-2.0 (model card)"
+    },
+    {
+      "name": "徕卡一瞬",
+      "id": "leica-instant-v2",
+      "type": "lut",
+      "path": "app/src/main/assets/looks/leica-instant-v2.bin",
+      "bundled": true,
+      "origin": "author",
+      "sha256": "87d1b46ae221b272227f845f2a7a984357b0d4056a79a2570b84c1271e3f9dcf",
+      "bytes": 6591012,
+      "format": "PLUT0001, 65^3 RGB Float64 big-endian, red-fastest",
+      "usage": [
+        "photo",
+        "video"
+      ],
+      "license": "Personal non-commercial use; see LICENSE"
+    },
+    {
+      "name": "徕卡N瞬",
+      "id": "leica-n-instant",
+      "type": "lut",
+      "path": "app/src/main/assets/looks/leica-n-instant.bin",
+      "bundled": true,
+      "origin": "author",
+      "sha256": "72d3e0d901aba3560738486a2fa2139a44e53b966e5d0b35ac0ca33d6fb16ff9",
+      "bytes": 6591012,
+      "format": "PLUT0001, 65^3 RGB Float64 big-endian, red-fastest",
+      "usage": [
+        "video"
+      ],
+      "license": "Personal non-commercial use; see LICENSE"
     }
   ]
 }
