@@ -1,0 +1,6 @@
+/config.json
+/workbench-data/
+/.venv/
+/.DS_Store
+__pycache__/
+*.py[cod]

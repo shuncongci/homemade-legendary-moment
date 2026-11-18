@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>传奇一瞬 · 本地影像工作台</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 108 108'%3E%3Cpath fill='%231C1B19' d='M0 0H108V108H0Z'/%3E%3Cg fill='none' stroke='%23C4B8A6' stroke-width='3' stroke-linejoin='round' stroke-linecap='round'%3E%3Cpath d='M33 39H43L47 34H61L65 39H75Q80 39 80 44V68Q80 73 75 73H33Q28 73 28 68V44Q28 39 33 39Z'/%3E%3Cpath d='M54 45A11 11 0 1 1 54 67A11 11 0 1 1 54 45Z M70 46H73'/%3E%3C/g%3E%3C/svg%3E">
+<link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/ux.css"><script src="/controls.js" defer></script><script src="/mobile-motion.js" defer></script><script src="/progress-ui.js" defer></script><script src="/video-compare.js" defer></script><script src="/app.js" defer></script><script src="/workspace-features.js" defer></script>
+</head>
+<body>
+<svg class="sprite" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><defs>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+<symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h5m4 0h7M4 17h10m4 0h2M9 4v6m5 4v6"/></symbol>
+<symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 19h16M6 15V9m6 6V4m6 11v-5"/></symbol>
+<symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+<symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+<symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8" cy="9" r="1.5"/><path d="m4 18 5-5 4 3 3-4 5 6"/></symbol>
+<symbol id="i-focus" viewBox="0 0 24 24"><path d="M4 9V4h5m6 0h5v5m0 6v5h-5m-6 0H4v-5"/><circle cx="12" cy="12" r="3"/></symbol>
+<symbol id="i-crop" viewBox="0 0 24 24"><path d="M7 3v14h14M3 7h14v14"/></symbol>
+<symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 16v4h16v-4"/></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+<symbol id="i-play" viewBox="0 0 24 24"><path d="m9 5 11 7-11 7Z"/></symbol>
+<symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></symbol>
+<symbol id="i-arrow" viewBox="0 0 24 24"><path d="m14 6-6 6 6 6"/></symbol>
+<symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></symbol>
+<symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v2"/></symbol>
+</defs></svg>
+<div class="app-shell">
+<header class="topbar">
+<button id="style-trigger" class="style-trigger" aria-label="选择色彩风格" aria-haspopup="menu" aria-expanded="false"><span id="style-tone" class="hidden"></span><strong id="style-name">徕卡一瞬</strong><svg><use href="#i-chevron"/></svg></button>
+<nav class="mode-switch" aria-label="工作模式"><button class="active" data-mode="photo" aria-pressed="true">照片</button><button data-mode="video" aria-pressed="false">视频</button><button data-mode="batch" aria-pressed="false">批量</button></nav>
+<div class="header-actions"><button id="history-btn" class="icon-button" title="处理记录" aria-label="处理记录"><svg><use href="#i-clock"/></svg><span id="history-count" class="badge">0</span></button><button id="monitor-btn" class="icon-button" title="运行监测" aria-label="运行监测"><svg><use href="#i-chart"/></svg></button><button id="params-btn" class="icon-button" aria-label="参数面板" aria-expanded="false" title="参数"><svg><use href="#i-sliders"/></svg></button><button id="more-btn" class="icon-button" title="更多与设置" aria-label="更多与设置"><svg><use href="#i-more"/></svg></button></div>
+</header>
+<main class="workspace" id="workspace"><section class="editor-area" id="editor-area" aria-label="影像工作台">
+<div class="workspace-bar"><div class="asset-heading"><span id="workspace-title" class="workspace-title">照片工作台</span><h1 id="asset-name">等待导入原片</h1></div><div class="asset-navigation"><button id="previous-asset" class="icon-button" aria-label="上一个素材" disabled><svg><use href="#i-arrow"/></svg></button><span id="asset-position">—</span><button id="next-asset" class="icon-button next-arrow" aria-label="下一个素材" disabled><svg><use href="#i-arrow"/></svg></button><button id="fit-btn" class="text-button">适应画布</button><button id="library-btn" class="icon-button" aria-label="本次相册" title="本次相册"><svg><use href="#i-grid"/></svg></button></div></div>
+<section id="stage" class="stage" aria-label="影像预览区">
+<div id="empty-state" class="empty-state"><div class="empty-lens"><svg><use href="#i-image"/></svg></div><h2 id="empty-title">导入照片，开始显影</h2><p id="empty-description">从本地导入原片</p><button id="empty-import" class="light-button"><svg><use href="#i-plus"/></svg>选择照片</button><small id="format-hint">JPEG / PNG / WebP · 原片保留</small></div>
+<div id="image-frame" class="image-frame hidden"><img id="preview-original" alt="原片预览" draggable="false"><img id="preview-result" alt="显影结果" class="hidden" draggable="false"><img id="preview-depth" alt="深度图" class="hidden" draggable="false"><img id="preview-subject" alt="蓝色主体保护区" class="hidden" draggable="false"><div id="crop-overlay" class="crop-overlay hidden"><i></i><i></i><i></i><i></i></div><div id="focus-marker" class="focus-marker hidden" title="拖动景深焦点"><span></span></div><div id="subject-markers"></div><input id="compare-range" class="compare-slider hidden" type="range" min="0" max="100" step="1" value="50" aria-label="原片与成片对比位置" aria-describedby="compare-help"><span class="photo-side-label before hidden">原片</span><span class="photo-side-label after hidden">成片</span><div id="compare-line" class="compare-line hidden"><span aria-hidden="true"><svg class="compare-grip-icon" viewBox="0 0 28 18" width="28" height="18" focusable="false" aria-hidden="true"><path d="M9 4 4 9l5 5M19 4l5 5-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div></div>
+<div id="video-compare-frame" class="video-compare-frame hidden" aria-label="已完成视频的处理前后对比，左右拖动画面或聚焦画内滑杆使用方向键">
+<video id="video-before" preload="auto" playsinline muted aria-label="处理前原片" tabindex="-1"></video><video id="video-after" preload="auto" playsinline aria-label="已完成处理后的成片" tabindex="-1"></video>
+<div id="video-after-placeholder" class="video-after-placeholder" aria-hidden="true">正在载入处理后画面…</div>
+<span id="video-before-label" class="video-side-label before">处理前</span><span class="video-side-label after">处理后</span><div id="video-compare-line" class="compare-line"><span aria-hidden="true"><svg class="compare-grip-icon" viewBox="0 0 28 18" width="28" height="18" focusable="false" aria-hidden="true"><path d="M9 4 4 9l5 5M19 4l5 5-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
+</div>
+<video id="video-player" class="video-player hidden" controls preload="metadata" playsinline></video>
+<div id="video-playback-note" class="video-playback-note hidden" role="status"><h3>原编码无法直接播放</h3><p>可按需生成浏览器兼容的原片播放预览；仅用于播放，不替换原片或正式成片。也可抽帧或下载。</p><button id="compatible-playback" class="outline-button">生成兼容播放预览</button><button id="fallback-preview" class="outline-button">抽取当前帧预览</button></div>
+<canvas id="process-canvas" class="process-canvas" aria-hidden="true" aria-label="过程画面，仅为预览，不影响导出"></canvas>
+<div id="process-hud" class="process-hud" aria-hidden="true" inert>
+ <div class="process-top"><span class="process-signal" aria-hidden="true"></span><strong id="process-title">准备计算</strong><span id="process-elapsed">已用 0秒</span></div>
+ <p id="process-name" class="process-name"></p><p id="process-detail" class="process-detail"></p>
+ <div id="process-meter" class="process-meter"><span></span></div>
+ <p id="process-presentation" class="process-presentation"></p>
+ <div class="process-bottom"><span id="process-queue"></span><button id="cancel-btn" class="text-button hidden">取消任务</button><button id="process-open" class="text-button" aria-haspopup="dialog">进度详情</button><button id="process-dismiss" class="text-button">隐藏过程画面</button></div>
+</div><span id="process-announcement" class="sr-only" role="status" aria-live="polite"></span>
+<div class="drop-mask" id="drop-mask"><svg><use href="#i-plus"/></svg><strong>松开以导入素材</strong></div>
+</section>
+<span id="compare-help" class="sr-only">左右拖动画面对比；方向键微调，Shift 加方向键或 Page Up、Page Down 每次移动百分之十；Home、End 查看完整一侧，双击回到中间。</span>
+<div class="preview-caption hidden" id="preview-caption"><span id="preview-label">原片</span><span id="dimensions"></span></div>
+<div id="video-result-controls" class="video-result-controls hidden" aria-label="成片同步播放控制"><button id="video-result-play" class="icon-button" aria-label="播放" title="播放" aria-pressed="false" disabled><svg aria-hidden="true"><use href="#i-play"/></svg></button><span id="video-result-time">00:00</span><input id="video-result-seek" type="range" min="0" max="1000" value="0" step="1" aria-label="已完成视频的播放位置，不重新处理" disabled><span id="video-result-duration">00:00</span><button id="video-result-mute" class="text-button" aria-pressed="false">静音</button></div>
+<div id="video-result-note" class="video-result-note hidden" role="status"><span id="video-result-message"></span> <button id="compatible-result-playback" class="text-button hidden">生成成片兼容播放预览</button> <a id="video-result-download" download>下载成片</a></div>
+<div id="timeline" class="timeline hidden"><span id="time-label">00:00</span><input type="range" id="video-position" min="0" max="1000" value="100" aria-label="视频抽帧位置"><span id="duration-label">00:00</span><button id="video-preview" class="outline-button">抽帧预览</button></div>
+<div class="stage-toolbar hidden" id="stage-toolbar"><div id="view-switch" class="view-switch" aria-label="预览视图"><button class="active" data-view="original" aria-pressed="true">原图</button><button data-public-unavailable data-view="depth" disabled aria-pressed="false">深度</button><button data-public-unavailable data-view="subject" disabled aria-pressed="false">保护区</button><button data-view="result" disabled aria-pressed="false">成片</button><button data-view="compare" disabled aria-pressed="false">对比</button><button data-view="play" class="hidden" aria-pressed="false">播放原片</button><button data-view="frame" class="hidden" aria-pressed="false">抽帧对比</button></div><button id="end-picking" class="text-button hidden">结束选点</button></div>
+<div class="material-actions" role="group" aria-label="管理导入素材"><span>导入素材</span><button id="remove-current" class="text-button" disabled>移除当前</button><button id="remove-selected" class="text-button hidden" disabled>移除所选</button><button id="clear-materials" class="text-button" disabled>清空全部</button></div>
+<aside id="filmstrip" class="library-rail" aria-label="本次素材"><div class="library-heading"><span id="library-kind">照片</span><span id="film-count">0</span></div><label class="library-search"><input id="film-search" type="search" placeholder="查找素材" aria-label="按文件名查找素材"></label><div class="library-selection"><button id="select-all" class="text-button hidden">全选</button><span id="library-selection-count"></span></div><div id="film-items" class="film-items"></div><div id="library-empty" class="library-empty"><strong>还没有素材</strong></div></aside>
+<footer class="action-dock"><button id="import-btn" class="studio-button" title="导入本地素材"><svg><use href="#i-image"/></svg><span>导入</span></button><div class="action-summary"><span id="action-title">准备开始</span><span id="action-description">调整后点击显影</span></div><div class="action-buttons"><button id="develop-btn" class="develop-button" disabled><span id="develop-label">显影</span></button></div><button id="export-btn" class="studio-button" disabled><svg><use href="#i-download"/></svg><span>导出</span></button><progress id="task-progress" class="task-progress hidden" max="100" value="0" aria-label="处理进度"></progress></footer>
+</section>
+<aside id="inspector" class="inspector closed" aria-label="处理参数"><div class="panel-heading"><h2>参数</h2><button id="close-panel" class="icon-button" aria-label="收起参数面板"><svg><use href="#i-close"/></svg></button></div><div class="panel-tabs" role="tablist" aria-label="参数分类"><button id="tab-process" class="active" data-tab="process" role="tab" aria-controls="panel-process" aria-selected="true">流程</button><button data-public-unavailable id="tab-focus" data-tab="focus" role="tab" aria-controls="panel-focus" aria-selected="false" tabindex="-1">焦点 / 保护</button><button data-public-unavailable id="tab-compose" data-tab="compose" role="tab" aria-controls="panel-compose" aria-selected="false" tabindex="-1">构图</button><button id="tab-sizes" data-tab="sizes" role="tab" aria-controls="panel-sizes" aria-selected="false" tabindex="-1">尺寸</button></div><div class="panel-scroll" id="panel-scroll"><section id="panel-process" class="tab-content" role="tabpanel" aria-labelledby="tab-process"><label class="process-step"><span class="step-icon"><svg><use href="#i-image"/></svg></span><span class="step-copy"><strong>色彩显影</strong><small id="pipeline-style">徕卡一瞬</small><small id="color-mode-note" class="hidden">视频色彩处理固定开启</small></span><input type="checkbox" id="color-enabled" checked role="switch"><span class="toggle"></span></label>
+          <label class="process-step" data-public-unavailable id="blur-row"><span class="step-icon"><svg><use href="#i-focus"/></svg></span><span class="step-copy"><strong>景深虚化</strong><small>手动或智能焦点 · 实验性效果</small></span><input type="checkbox" id="blur-enabled" role="switch"><span class="toggle"></span></label>
+          <label class="process-step" data-public-unavailable><span class="step-copy"><strong>智能焦点</strong><small>最高分构图框内选焦 · 与虚化、并发开关独立</small></span><input id="smart-focus" type="checkbox" role="switch" aria-describedby="smart-focus-note"><span class="toggle"></span></label><p data-public-unavailable id="smart-focus-note" class="fine-note">最高分框内优先取人脸眼线，无脸取框中心；不自动裁切，默认关闭。</p>
+<section data-public-unavailable id="video-manual-focus" class="hidden" aria-labelledby="video-manual-title">
+<div class="section-label spaced" id="video-manual-title">视频手动固定焦点</div>
+<div class="resolution-row"><label for="video-focus-x">横向位置（%）</label><input id="video-focus-x" class="resolution-value" type="number" min="0" max="100" step="any" required inputmode="decimal" aria-describedby="video-manual-note"></div>
+<div class="resolution-row"><label for="video-focus-y">纵向位置（%）</label><input id="video-focus-y" class="resolution-value" type="number" min="0" max="100" step="any" required inputmode="decimal" aria-describedby="video-manual-note"></div>
+<button id="pick-video-focus" class="outline-button full">在原片画面上选择焦点</button>
+<div class="focus-info"><span id="video-focus-label">尚未设置手动焦点</span><button id="clear-video-focus" class="text-button">清除焦点</button></div>
+<p id="video-manual-note" class="fine-note">填写0–100的横纵坐标，或在可播放的原片 / 已有抽帧原图上点选。整段使用同一画面位置，每帧重算深度，不追踪主体；未选点会明确提示，不自动取中心。虚化仍由独立开关控制。</p>
+</section>
+<div data-public-unavailable class="section-label spaced">虚化光圈</div><div data-public-unavailable id="apertures" class="apertures"></div>
+          <button class="process-step step-link" data-public-unavailable id="go-compose"><span class="step-icon"><svg><use href="#i-crop"/></svg></span><span class="step-copy"><strong>构图方案</strong><small id="crop-summary">保留原构图</small></span><svg><use href="#i-chevron"/></svg></button>
+          <div id="hdr-setting" class="hidden"><label class="setting-row">保留原片 HDR<input id="hdr-enabled" type="checkbox"></label><p id="hdr-hint" class="fine-note">仅适用于含 HDR 增益图的原片。本地调色后同时保存 SDR 与 HDR 成片；普通 SDR 原片不能转换为 HDR。</p></div><div id="video-settings" class="hidden">
+<label class="setting-row">批量显影视频 <input id="video-batch-enabled" type="checkbox"></label><p class="fine-note">视频逐帧应用一瞬或 N 瞬 LUT，输出重编码的视频。</p><p id="audio-note" class="notice"></p></div>
+          <details class="asset-details"><summary>素材信息</summary><div id="file-facts" class="facts empty-facts">尚未导入素材</div></details>
+        </section><section id="panel-focus" class="tab-content hidden" role="tabpanel" aria-labelledby="tab-focus"><div class="section-label">手动焦点 <span></span></div><h3 class="panel-intro">焦点与光圈</h3><p class="fine-note">可在流程中开启智能焦点免选点；手动模式在原片主体内部点选。两种方式都不会自动添加保护点。</p><button id="pick-focus" class="outline-button full"><svg><use href="#i-focus"/></svg>在原片上选择焦点</button><div class="focus-info"><span id="focus-label">尚未设置焦点</span><button id="clear-focus" class="text-button">重置</button></div><p class="fine-note">数值越小，虚化越强。效果取决于深度质量；实验性景深不等同物理镜头。</p><button id="analyse-depth" class="outline-button full"><svg><use href="#i-chart"/></svg>分析原片深度</button><div id="depth-hint" class="fine-note"></div><div class="section-label spaced">主体保护</div>
+<label class="process-step"><span class="step-copy"><strong>保护选中主体</strong><small>保护点与景深焦点分开设置</small></span><input type="checkbox" id="subject-enabled" role="switch"><span class="toggle"></span></label>
+<div class="subject-actions"><button id="pick-subject" class="outline-button">添加保护点</button><button id="finish-subject" class="outline-button">结束选点</button></div>
+<div id="subject-points" class="subject-points" aria-label="已选保护点"></div>
+<div class="resolution-row"><label for="subject-concurrency">保护点计算并发数</label><input id="subject-concurrency" class="resolution-value" type="number" min="1" step="1" value="1" inputmode="numeric" aria-describedby="subject-concurrency-note"></div>
+<p id="subject-concurrency-note" class="fine-note">默认1，不设固定最大值；实际并发不超过有效保护点数，仍受内存保护。</p>
+<button id="compute-subject" class="light-button full">统一计算保护</button><button id="clear-subject" class="text-button full">清空保护点</button>
+<p id="subject-hint" class="fine-note" role="status">选点后点击「统一计算保护」，再检查蓝色保护区。计算失败时保留上次结果。</p></section>
+        <section id="panel-compose" class="tab-content hidden" role="tabpanel" aria-labelledby="tab-compose"><div class="section-label">构图方案 <span></span></div><h3 class="panel-intro">智能构图</h3><p class="fine-note">分析原片并推荐裁切区域。选择后预览边界，点击显影才会应用。原构图始终保留。</p><button id="analyse-compose" class="outline-button full"><svg><use href="#i-crop"/></svg>分析构图</button><div id="crop-options" class="crop-options"></div><button id="reset-crop" class="text-button full">恢复原构图</button></section><section id="panel-sizes" class="tab-content hidden" role="tabpanel" aria-labelledby="tab-sizes"><div class="section-label">连续长边设置</div><div id="resolution-controls"></div><p class="fine-note">单位 px，至少512，可逐像素调整，也可选择不限制。调色、视频和批量长边同时限制成片时取较小值。不放大小图，原片不变。</p><p class="notice">这些设置控制处理图像的尺寸，不改变模型内部的计算分辨率；调大尺寸不一定增加细节。「不限制」仍受工作像素上限、内存和磁盘空间限制，资源不足时会提示调整。</p></section></div><div class="panel-foot">改参数不会自动显影</div></aside><div id="style-menu" class="style-menu hidden" role="menu" aria-label="选择风格"></div></main>
+<div class="task-status" id="task-status"><div class="header-meta"><span class="online-dot"></span><span id="connection">连接中</span></div><span id="task-message" role="status">准备就绪</span><span id="selection-hint">本机处理 · 原片保留</span></div></div>
+<input type="file" id="file-input" accept=".jpg,.jpeg,.png,.webp" multiple hidden>
+<dialog id="history-dialog" class="dialog wide"><div class="dialog-title"><div><small>PROCESSING HISTORY</small><h2>处理记录</h2></div><button class="icon-button" data-close aria-label="关闭"><svg><use href="#i-close"/></svg></button></div><p class="fine-note">本次会话的任务与成片可在刷新后恢复。页面中尚未提交的批量列表不会保留，处理期间请勿刷新；重启工作台前请先下载成片。</p><div id="history-list"></div></dialog>
+<dialog id="settings-dialog" class="dialog"><div class="dialog-title"><div><small>PREFERENCES</small><h2>工作台设置</h2></div><button class="icon-button" data-close aria-label="关闭"><svg><use href="#i-close"/></svg></button></div><div class="section-label">处理资源</div><section id="execution-settings" aria-labelledby="execution-title"><label class="setting-row" id="execution-title" for="execution-mode">执行模式 <select id="execution-mode"><option value="concurrent">并发 · 按资源预检</option><option value="serial">串行 · 较低内存峰值</option></select></label><p class="fine-note">串行逐帧处理，适合内存较少时使用；并发可提高速度，但需要更多内存。画质与尺寸不变，保存后用于后续任务。</p><button id="save-execution-mode" class="text-button">保存执行模式</button><p id="execution-status" class="fine-note" role="status"></p></section><section data-public-unavailable id="instant-settings" aria-labelledby="instant-title"><label class="setting-row" id="instant-title" for="instant-backend">一瞬 / N瞬计算 <select id="instant-backend"><option value="auto">自动 · 可用时公共 GPU</option><option value="cpu-exact">CPU 精确 · 与原 CPU 一致</option></select></label><p class="fine-note">自动模式缺少可用 GPU 时使用 CPU；GPU 可能有极少数 1/255 舍入差异。CPU 精确模式保留原效果。仅影响后续一瞬 / N瞬任务，不自动重算。</p><button id="save-instant-backend" class="text-button">保存一瞬计算方式</button><p id="instant-backend-status" class="fine-note" role="status"></p></section><label class="setting-row" for="pixel-cap">工作像素上限 <strong id="pixel-cap-label">200 MP</strong></label><input type="range" id="pixel-cap" min="10" max="200" step="10" value="200"><p class="fine-note">导入照片超出上限时，工作图会等比缩小，原文件不变。200 MP 仅为允许导入的像素上限；能否处理及处理速度仍取决于可用内存和设备。</p><label class="setting-row">CPU 线程 <select id="cpu-threads"><option value="0">自动</option><option>1</option><option>2</option><option>4</option><option>8</option><option>16</option><option>32</option></select></label><label class="setting-row">视频批次帧数 <select id="video-batch"><option>1</option><option>2</option><option>4</option><option>8</option><option>16</option><option>32</option></select></label>
+<section id="action-archive-settings" aria-labelledby="archive-settings-title">
+<div class="section-label spaced" id="archive-settings-title">本地动作存档</div>
+<p class="fine-note">每个照片或视频文件只保留最近一个完整处理动作。新动作成功后才替换；失败、取消或中断不替换。</p>
+<div class="archive-quota"><label for="archive-limit">最多保留的文件数</label><input id="archive-limit" class="resolution-value" type="number" min="1" max="64" step="1" value="10" inputmode="numeric" aria-describedby="archive-limit-note" required><input id="archive-limit-range" type="range" min="1" max="64" step="1" value="10" aria-label="调整存档文件数量" aria-describedby="archive-limit-note"></div>
+<p id="archive-limit-note" class="fine-note">照片与视频共用名额，默认10个，支持1–64个（与工作台素材上限一致）。按最近成功完成动作的顺序保留；查看存档不改变顺序。</p>
+<p id="archive-settings-status" class="fine-note" role="status" aria-live="polite"></p>
+<button id="save-archive-limit" class="outline-button full">保存存档数量</button>
+<p class="fine-note">此项单独保存到当前端口工作区，服务重开仍保留。不保存中间步骤或视频帧。淘汰仅删除动作快照，不删除原片、历史完整成片、已下载文件或旧格式存档；4 GiB会话预算与磁盘保护仍生效。</p>
+</section>
+<section id="video-color-concurrency" aria-labelledby="video-color-title">
+<div class="section-label spaced" id="video-color-title">视频调色帧并发</div>
+<div class="resolution-row"><label for="video-color-workers">自定义调色并发帧数</label><input id="video-color-workers" class="resolution-value" type="number" min="1" step="1" value="8" inputmode="numeric" required aria-describedby="video-color-note"></div>
+<p id="video-color-status" class="fine-note" role="status" aria-live="polite"></p>
+<button id="save-color-workers" class="outline-button full">保存调色并发设置</button>
+<p id="video-color-note" class="fine-note">同时处理的视频帧数，默认8。适用于 CPU 调色；GPU 批次与虚化另行设置。并发越高需要的内存越多，不一定更快；资源不足时会提示。</p>
+</section>
+<section id="video-concurrency" aria-labelledby="video-concurrency-title">
+<div class="section-label spaced" id="video-concurrency-title">视频虚化并发</div>
+<label class="process-step"><span class="step-copy"><strong>智能并发（自适应）</strong><small>关闭后自定义并发帧数，默认1路</small></span><input id="video-focus-adaptive" type="checkbox" role="switch" aria-describedby="video-concurrency-note"><span class="toggle"></span></label>
+<div id="video-focus-custom-inline" class="resolution-row"><label for="video-focus-workers-inline">自定义虚化并发帧数</label><input id="video-focus-workers-inline" class="resolution-value" type="number" min="1" step="1" value="1" inputmode="numeric" aria-describedby="video-concurrency-note"></div>
+<p id="video-concurrency-status" class="fine-note" role="status" aria-live="polite"></p>
+<button id="save-focus-workers" class="outline-button full">保存虚化并发设置</button>
+<p id="video-concurrency-note" class="fine-note">仅影响开启虚化的视频。智能并发按设备余量安排；也可手动输入至少1的整数。较高并发需要更多内存，不一定更快。保存后用于后续任务。</p>
+</section>
+<input id="video-gpu" type="checkbox" hidden><p class="fine-note">桌面公开版使用 CPU。</p><div class="section-label spaced">界面偏好</div><label class="setting-row">界面动效 <select id="motion-preference"><option value="auto">连贯动效 · 跟随系统</option><option value="reduce">减少动态效果</option></select></label><p class="fine-note">动效偏好立即生效，仅保存在当前浏览器，系统减少动态效果优先。不影响显影与导出。</p><button id="save-settings" class="light-button full">保存处理设置</button></dialog>
+<dialog id="monitor-dialog" class="dialog"><div class="dialog-title"><div><small>LOCAL ENGINE</small><h2>运行监测</h2></div><button class="icon-button" data-close aria-label="关闭"><svg><use href="#i-close"/></svg></button></div><div id="monitor-content" class="facts"></div><p class="fine-note">查看任务、处理速度和预计剩余时间；这里不提供实时内存或显存占用。取消只停止本次计算，不关闭工作台；原片、已完成缓存和上次成片保留。</p></dialog>
+<dialog id="more-dialog" class="dialog"><div class="dialog-title"><div><small>WORKBENCH</small><h2>更多与设置</h2></div><button class="icon-button" data-close aria-label="关闭"><svg><use href="#i-close"/></svg></button></div><button id="camera-open" class="menu-row">拍摄导入 <svg><use href="#i-image"/></svg></button><button id="watch-open" class="menu-row">外接目录监听 <svg><use href="#i-grid"/></svg></button><button data-public-unavailable id="space-open" class="menu-row">空间展示 <svg><use href="#i-focus"/></svg></button><button id="open-recovery" class="menu-row">本地存档与恢复</button><button id="open-settings" class="menu-row">工作台设置 <svg><use href="#i-sliders"/></svg></button><button id="restore-original" class="menu-row">恢复当前照片参数 <svg><use href="#i-image"/></svg></button><div class="section-label spaced">功能与使用限制</div><p class="fine-note">照片支持四种色彩；视频支持一瞬和 N 瞬。可批量显影、对比和导出。</p><p class="notice">保留 HDR 需要含增益图的原片；实际显示效果取决于浏览器与显示器。拍摄、目录监听和传感器需你授权；这些附加功能在 Mac / Linux 上可能不可用。相册标识的显示因设备和相册版本而异。</p><div class="shortcut-list"><span>导入本地素材</span><kbd>O</kbd><span>显影 / 视频抽帧</span><kbd>Ctrl ↵</kbd><span>切换参数面板</span><kbd>P</kbd></div></dialog>
+<dialog id="export-dialog" class="dialog"><div class="dialog-title"><div><small>EXPORT</small><h2>导出成片</h2></div><button class="icon-button" data-close aria-label="关闭"><svg><use href="#i-close"/></svg></button></div><div id="export-options"><label class="setting-row">导出格式<select id="export-format"><option value="png-lossless">成片 PNG · 无损</option><option value="jpeg-95">JPEG · 高质量 Q95</option><option value="webp-90">WebP · 省空间 Q90</option><option value="webp-95">WebP · 高质量 Q95</option><option value="webp-lossless">WebP · 无损</option><option value="hdr-gainmap">Ultra HDR JPEG · 真实增益图</option></select></label><label class="setting-row">徕卡一瞬相册标识<input id="export-badge" type="checkbox"></label><p class="fine-note">仅写入照片信息，不添加画面水印，默认关闭。开启后 SDR 使用 JPEG，HDR 保留增益图；关闭后恢复之前选择的格式。标识是否显示取决于设备和相册版本。导出会保留兼容的 EXIF，包括原片已有的位置等信息，分享前请注意隐私；相机品牌沿用原片。</p><button id="encode-export" class="light-button full">按所选格式生成导出</button><p id="export-status" class="fine-note" role="status"></p></div><div id="export-content"></div></dialog>
+<dialog id="library-dialog" class="dialog wide"><div class="dialog-title"><div><small>SESSION LIBRARY</small><h2>本次相册</h2></div><button class="icon-button" data-close aria-label="关闭相册"><svg><use href="#i-close"/></svg></button></div><p class="fine-note">选择已导入素材或添加本地文件，不会自动显影。下方缩略图也可直接切换。</p><div id="library-list" class="library-list"></div><button id="clear-library" class="outline-button full">清空工作台全部照片与视频</button><p class="fine-note">移除仅影响工作台副本、成片、存档和记录，不会删除本机原文件；计算或上传期间不能清空。</p><button id="library-add" class="light-button full"><svg><use href="#i-plus"/></svg>导入本地文件</button></dialog>
+<dialog id="remove-dialog" class="dialog"><div class="dialog-title"><h2>移除工作台副本</h2><button class="text-button" data-close>返回</button></div><p id="remove-description" class="notice"></p><button id="confirm-remove" class="light-button full">确认移除副本与关联记录</button></dialog>
+<dialog id="archive-confirm-dialog" class="dialog" aria-labelledby="archive-confirm-title" aria-describedby="archive-confirm-description">
+<div class="dialog-title"><h2 id="archive-confirm-title">调整存档保留数量</h2><button class="text-button" data-close>返回</button></div>
+<p id="archive-confirm-description" class="notice"></p><ul id="archive-eviction-list" class="archive-eviction-list"></ul>
+<p class="fine-note">仅淘汰所列文件的动作快照；原片与历史完整成片不删除。此操作不能恢复已淘汰的快照。</p>
+<div class="recovery-actions"><button id="confirm-archive-limit" class="light-button">确认淘汰并保存</button><button id="cancel-archive-limit" class="outline-button" data-close>取消</button></div>
+</dialog>
+<dialog id="recovery-dialog" class="dialog wide recovery-dialog" aria-labelledby="recovery-title" aria-describedby="recovery-intro">
+<div class="dialog-title"><div><small>LOCAL ARCHIVE</small><h2 id="recovery-title">本地存档</h2></div><button class="icon-button" data-close aria-label="关闭并保留存档"><svg><use href="#i-close"/></svg></button></div>
+<p id="recovery-intro" class="recovery-intro">每个文件仅保留最后一个完整动作；恢复结果与参数不会开始计算。未完成任务不进入存档列表。</p>
+<div class="recovery-heading"><span>最近完整动作 · 每文件一项</span><span id="archive-saved-count"></span></div>
+<div id="archive-saved-list" class="archive-saved-list" aria-label="已保存的完整动作"></div>
+<p id="archive-saved-note" class="fine-note"></p>
+<section class="archive-clear-section" aria-labelledby="archive-clear-heading">
+<div class="archive-clear-heading"><div><h3 id="archive-clear-heading">释放存档空间</h3><p class="fine-note">清理完整动作快照和旧步骤／视频帧档；保留原片、完整成片与导出文件。</p></div><button id="clear-archives" class="outline-button archive-danger">清空存档</button></div>
+<p id="archive-clear-status" class="fine-note" role="status" aria-live="polite"></p>
+</section>
+<details class="recovery-storage"><summary>保存位置与恢复规则</summary><p id="recovery-location" class="fine-note"></p></details>
+<p id="recovery-status" class="fine-note" role="status" aria-live="polite"></p>
+<div class="recovery-actions"><button id="close-recovery" class="outline-button" data-close>关闭</button></div>
+<p class="recovery-footnote">关闭窗口只退出查看，不删除存档或开始计算。</p>
+</dialog>
+<dialog id="archive-clear-dialog" class="dialog" aria-labelledby="archive-clear-title" aria-describedby="archive-clear-description">
+<div class="dialog-title"><h2 id="archive-clear-title">确认清空存档？</h2><button class="text-button" data-close>返回</button></div>
+<p id="archive-clear-description" class="notice"></p>
+<ul id="archive-clear-list" class="archive-eviction-list"></ul>
+<p class="fine-note">此操作不能撤销，清空后无法从这些存档恢复，需要从原片重新计算。原片、已有完整成片、导出文件和未知文件均不删除；不会自动开始显影。</p>
+<p id="archive-clear-confirm-status" class="fine-note" role="status" aria-live="polite"></p>
+<div class="recovery-actions"><button id="cancel-clear-archives" class="outline-button" data-close autofocus>取消，保留存档</button><button id="confirm-clear-archives" class="outline-button archive-danger">确认清空存档</button></div>
+</dialog>
+<dialog id="memory-retry-dialog" class="dialog" aria-labelledby="memory-retry-title" aria-describedby="memory-retry-error memory-retry-risk">
+ <div class="dialog-title"><h2 id="memory-retry-title">内存预检未通过</h2><button id="cancel-memory-retry" class="text-button" data-close autofocus>先不处理</button></div>
+ <p id="memory-retry-task" class="fine-note"></p><p id="memory-retry-error" class="notice"></p>
+ <p id="memory-retry-risk" class="notice">跳过估算后，内存或显存耗尽可能导致任务失败、计算进程或应用退出。只对这个失败任务单次生效，不自动缩图或降低自定义并发。</p>
+ <p class="fine-note">点击后按失败时的参数直接重新开始；不影响其他任务，不跳过文件、尺寸、路径、磁盘和存档归属检查。取消、关闭或 Escape 不开始处理。</p>
+ <p id="memory-retry-status" class="fine-note" role="status" aria-live="polite"></p>
+ <button id="confirm-memory-retry" class="outline-button archive-danger full">不管不顾，直接开始</button>
+</dialog>
+<dialog id="progress-dialog" class="dialog wide progress-dialog">
+ <div class="dialog-title"><div><h2>计算过程</h2></div><button class="icon-button" data-close aria-label="关闭进度详情"><svg><use href="#i-close"/></svg></button></div>
+ <p class="fine-note">查看当前步骤、已完成数量和耗时。无法提供步骤百分比时显示「正在计算」；动画不表示完成比例，也不会写入导出成片。</p>
+ <div id="progress-jobs" class="progress-jobs" aria-label="选择查看任务"></div><p id="progress-empty" class="fine-note">还没有计算任务。</p>
+ <section id="progress-content"><h3 id="progress-job-name" class="progress-file"></h3><div class="progress-heading"><strong id="progress-phase"></strong><span id="progress-elapsed"></span></div>
+ <p id="progress-message" class="fine-note"></p><p id="progress-units" class="progress-units"></p><div id="progress-meter" class="process-meter"><span></span></div><p id="progress-count" class="fine-note"></p>
+ <ol id="progress-steps" class="progress-steps"></ol><div class="progress-heading"><span id="progress-queue" class="fine-note"></span><button id="progress-cancel" class="outline-button">取消此任务</button></div>
+ <details class="progress-log" open><summary>步骤记录</summary><ol id="progress-events"></ol></details></section>
+</dialog>
+<dialog id="camera-dialog" class="dialog wide"><div class="dialog-title"><div><small>LOCAL CAMERA</small><h2>拍摄导入</h2></div><button class="icon-button" data-close aria-label="关闭拍摄"><svg><use href="#i-close"/></svg></button></div><video id="camera-live" autoplay playsinline muted style="width:100%;max-height:52vh;background:#0d0e0f"></video><p class="fine-note">仅在点击开启并经浏览器授权后使用相机。拍摄帧导入本机工作台，不上传第三方，不自动显影；关闭窗口即停止相机。</p><p id="camera-status" class="notice" role="status">尚未开启相机。</p><button id="camera-start" class="outline-button">开启本机相机</button><button id="camera-capture" class="light-button" disabled>拍摄并导入</button></dialog>
+<dialog id="watch-dialog" class="dialog wide"><div class="dialog-title"><div><small>EXTERNAL FOLDER</small><h2>外接目录监听</h2></div><button class="icon-button" data-close aria-label="关闭外接"><svg><use href="#i-close"/></svg></button></div><p class="fine-note">选择相机联机软件或已挂载设备的接收目录，只监听本层新增 JPEG / PNG / WebP。开始时已有文件不导入；写入稳定后复制到本机会话，不修改或删除目录原片。页面关闭或刷新即停止，浏览器后台可能延迟。</p><button id="watch-choose" class="outline-button">授权选择接收目录</button><label class="setting-row">新增照片导入后自动显影<input id="watch-develop" type="checkbox"></label><p class="fine-note">默认仅导入。自动显影使用开始监听时的色彩与尺寸预设，不继承其他照片的焦点或保护点。</p><p id="watch-status" class="notice" role="status">未选择目录。</p><button id="watch-start" class="light-button" disabled>开始监听新增照片</button><button id="watch-stop" class="outline-button" disabled>停止监听</button></dialog>
+<dialog id="space-dialog" class="dialog wide"><div class="dialog-title"><div><small>DISPLAY ONLY</small><h2>空间展示</h2></div><button class="icon-button" data-close aria-label="关闭空间展示"><svg><use href="#i-close"/></svg></button></div><canvas id="space-canvas" aria-label="原片相对深度的3D展示，拖动旋转，滚轮缩放，双击复位" tabindex="0" style="width:100%;height:52vh;touch-action:none;background:#0d0e0f"></canvas><p id="space-status" class="fine-note">空间展示仅用于观察，不改变焦点、已计算的深度或导出成片。</p><button id="space-analyse" class="outline-button">分析原片深度</button><button id="space-reset" class="outline-button">复位视角</button><button id="space-gyro" class="outline-button">启用传感器视差</button></dialog>
+<div id="toast" class="toast hidden" role="alert"></div>
+</body></html>
